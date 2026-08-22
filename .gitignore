@@ -1,0 +1,34 @@
+# Python caches and environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+Agents.md
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Test, coverage, and build output
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# macOS and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local logs and Nyx runtime files
+*.log
+nyx.pid
+nyx.sock
