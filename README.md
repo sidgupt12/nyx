@@ -1,7 +1,4 @@
-# Nyx
-
-<img width="1254" height="1254" alt="nyx" src="https://github.com/user-attachments/assets/0744ad66-6b25-40d7-bae2-91db1744312a" />
-
+# nyx
 
 This is a small, background listener for real Codex sessions. It does not
 start Codex or open a dashboard. Codex calls one hook when a session reaches a
