@@ -1,107 +1,77 @@
-"""Install the small global Codex hook without replacing other hooks."""
-
-from __future__ import annotations
+"""Install/uninstall only Nyx's hooks, preserving other tools' configuration."""
 
 import json
 import os
-import shutil
 from pathlib import Path
-from typing import Any, Dict
+import shlex
+import shutil
+import sys
+import time
+
+from .protocol import APPROVAL_SECONDS, EVENTS, runtime_dir
+
+LABEL = "Nyx hardware bridge"
 
 
-DEFAULT_HOOKS_PATH = Path.home() / ".codex" / "hooks.json"
-HOOK_TIMEOUT_SECONDS = 5
+def hook_command():
+    return shlex.join([sys.executable, str(Path(__file__).with_name("hook.py").resolve())])
 
 
-def install_global_hook(
-    *,
-    hooks_path: Path = DEFAULT_HOOKS_PATH,
-    hook_command: str | None = None,
-) -> Path:
-    """Merge our PermissionRequest hook into Codex's global hooks.json.
-
-    Existing JSON content is preserved.  A dated backup is made before an
-    existing file is changed.
-    """
-
-    hooks_path = Path(hooks_path).expanduser()
-    hook_command = hook_command or _default_hook_command()
-    if hooks_path.exists():
-        with hooks_path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        if not isinstance(data, dict):
-            raise ValueError("Codex hooks.json must contain a JSON object")
-        backup_path = hooks_path.with_suffix(hooks_path.suffix + ".bak")
-        if not backup_path.exists():
-            shutil.copy2(hooks_path, backup_path)
-    else:
-        data = {}
-
-    hooks = data.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        raise ValueError("Codex hooks.json 'hooks' value must be an object")
-    groups = hooks.setdefault("PermissionRequest", [])
-    if not isinstance(groups, list):
-        raise ValueError("Codex hooks.json PermissionRequest value must be an array")
-
-    for group in groups:
-        if not isinstance(group, dict):
-            continue
-        handlers = group.get("hooks", [])
-        if any(
-            isinstance(handler, dict)
-            and handler.get("type") == "command"
-            and handler.get("command") == hook_command
-            for handler in handlers
-        ):
-            for handler in handlers:
-                if (
-                    isinstance(handler, dict)
-                    and handler.get("type") == "command"
-                    and handler.get("command") == hook_command
-                ):
-                    handler["timeout"] = HOOK_TIMEOUT_SECONDS
-            _write_json(hooks_path, data)
-            return hooks_path
-
-    groups.append(
-        {
-            "matcher": "",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": hook_command,
-                    "timeout": HOOK_TIMEOUT_SECONDS,
-                    "statusMessage": "sending Codex permission notification",
-                }
-            ],
-        }
-    )
-    _write_json(hooks_path, data)
-    return hooks_path
-
-
-def _default_hook_command() -> str:
-    hook_path = Path(__file__).resolve().with_name("hook.py")
-    return f"{_python_executable()} {hook_path}"
-
-
-def _python_executable() -> str:
-    # The hook is launched by Codex from arbitrary project directories.  The
-    # current interpreter is the one that can import this local project.
-    import sys
-
-    return sys.executable
-
-
-def _write_json(path: Path, data: Dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2)
-        handle.write("\n")
-    os.replace(temporary, path)
+def is_ours(handler):
+    if not isinstance(handler, dict):
+        return False
     try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+        parts = shlex.split(handler.get("command", ""))
+    except ValueError:
+        return False
+    # Recognize the exact file previously installed by this checkout, even if
+    # the Python interpreter changed. Never use a broad substring match.
+    target = str(Path(__file__).with_name("hook.py").resolve())
+    return len(parts) == 2 and parts[1] == target
+
+
+def install_hooks(*, path=None, uninstall=False):
+    path = Path(path) if path else runtime_dir().parent / "hooks.json"
+    data = json.loads(path.read_text()) if path.exists() else {}
+    if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
+        raise ValueError("hooks.json must contain a hooks object")
+    hooks = data.setdefault("hooks", {})
+    for event in EVENTS:
+        groups = hooks.setdefault(event, [])
+        if not isinstance(groups, list):
+            raise ValueError(f"{event} must be a list")
+        for group in groups:
+            if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+                raise ValueError(f"Invalid {event} hook group; refusing to overwrite it")
+            group["hooks"] = [h for h in group["hooks"] if not is_ours(h)]
+        # Remove only emptied groups; there are no executable hooks in them.
+        hooks[event] = [g for g in groups if g["hooks"]]
+        if not uninstall:
+            hooks[event].append(
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": hook_command(),
+                            "timeout": APPROVAL_SECONDS + 4 if event == "PermissionRequest" else 2,
+                            "statusMessage": LABEL,
+                        }
+                    ],
+                }
+            )
+        elif not hooks[event]:
+            hooks.pop(event)
+    rendered = json.dumps(data, indent=2) + "\n"
+    if path.exists() and path.read_text() == rendered:
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        shutil.copy2(path, path.with_name(f"{path.name}.nyx-backup-{time.time_ns()}"))
+    temporary = path.with_suffix(".nyx-tmp")
+    # Owner-only from creation, not just after writing.
+    fd = os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(rendered)
+    os.replace(temporary, path)
+    return path

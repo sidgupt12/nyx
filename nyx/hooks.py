@@ -1,92 +1,74 @@
-"""Codex PermissionRequest hook entry point and local socket client."""
-
-from __future__ import annotations
+"""Short-lived Codex hook client. Missing bridge means normal Codex behavior."""
 
 import json
 import os
 import socket
 import subprocess
 import sys
-from pathlib import Path
-from typing import Any, Mapping, Optional, TextIO
 
-from .listener import SOCKET_PATH
-from .notifications import MacOSNotifier, NotificationSink
+from .protocol import APPROVAL_SECONDS, EVENTS, MAX_HOOK, encode, receive, socket_path
 
 
-def send_event(
-    payload: Mapping[str, Any],
-    *,
-    socket_path: Path = SOCKET_PATH,
-    timeout: float = 0.75,
-) -> Optional[dict]:
-    """Send one event and return immediately without waiting for the listener."""
-
-    try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-            connection.settimeout(timeout)
-            connection.connect(str(Path(socket_path).expanduser()))
-            connection.sendall(json.dumps(dict(payload)).encode("utf-8") + b"\n")
-            return {"ok": True}
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
-        return None
-
-
-def run_hook(
-    *,
-    stdin: TextIO = sys.stdin,
-    socket_path: Path = SOCKET_PATH,
-    notifier: Optional[NotificationSink] = None,
-) -> int:
-    """Forward Codex's JSON input without returning a permission decision.
-
-    If the background process is not running, notifying directly keeps the
-    integration useful while the user is setting it up.
-    """
-
-    try:
-        payload = json.load(stdin)
-    except (json.JSONDecodeError, TypeError, ValueError):
-        return 0
-    if not isinstance(payload, dict) or payload.get("hook_event_name") != "PermissionRequest":
-        return 0
-    payload = dict(payload)
-    payload["_nyx"] = {
-        "term_program": os.environ.get("TERM_PROGRAM"),
-        "term_session_id": os.environ.get("TERM_SESSION_ID"),
-        "iterm_session_id": os.environ.get("ITERM_SESSION_ID"),
-        "tty": _current_tty(),
+def origin():
+    metadata = {
+        name: os.environ.get(env, "")
+        for name, env in {
+            "term_program": "TERM_PROGRAM",
+            "iterm_session_id": "ITERM_SESSION_ID",
+            "vscode_pid": "VSCODE_PID",
+            "term_session_id": "TERM_SESSION_ID",
+            "vscode_ipc_hook_cli": "VSCODE_IPC_HOOK_CLI",
+        }.items()
     }
-    sent = send_event(payload, socket_path=socket_path, timeout=0.75)
-    if sent is not None:
-        return 0
-    (notifier if notifier is not None else MacOSNotifier()).notify(
-        "Codex needs permission",
-        _fallback_message(payload),
-    )
+    try:
+        tty = subprocess.check_output(
+            ["ps", "-o", "tty=", "-p", str(os.getppid())],
+            text=True,
+            timeout=0.2,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        metadata["tty"] = "/dev/" + tty if tty and tty != "??" else ""
+    except (OSError, subprocess.SubprocessError):
+        metadata["tty"] = ""
+    return metadata
+
+
+def run_hook(stdin=None, stdout=None, path=None):
+    stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
+    try:
+        raw = stdin.read(MAX_HOOK + 1)
+        if len(raw.encode()) > MAX_HOOK:
+            return 0
+        payload = json.loads(raw)
+        if not isinstance(payload, dict) or payload.get("hook_event_name") not in EVENTS:
+            return 0
+        payload["_nyx"] = origin()
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(0.3)
+            connection.connect(str(path or socket_path()))
+            connection.sendall(encode(payload))
+            response = receive(connection)
+            if response.get("wait") is True:
+                connection.settimeout(APPROVAL_SECONDS + 1)
+                response = receive(connection)
+            decision = response.get("decision")
+            if payload["hook_event_name"] == "PermissionRequest" and decision in {"allow", "deny"}:
+                json.dump(
+                    {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PermissionRequest",
+                            "decision": {"behavior": decision},
+                        }
+                    },
+                    stdout,
+                )
+                stdout.write("\n")
+    except (OSError, ValueError, TypeError):
+        pass  # Empty stdout: Codex keeps its own approval policy and prompt.
     return 0
 
 
-def _current_tty() -> Optional[str]:
-    try:
-        output = subprocess.check_output(
-            ["ps", "-o", "tty=", "-p", str(os.getppid())],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-    except (OSError, ValueError):
-        return None
-    tty = output.strip()
-    return tty if tty and tty != "??" else None
-
-
-def _fallback_message(payload: Mapping[str, Any]) -> str:
-    from .listener import permission_message
-
-    return permission_message(payload)
-
-
-def main() -> None:
+def main():
     raise SystemExit(run_hook())
 
 

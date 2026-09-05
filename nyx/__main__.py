@@ -1,108 +1,107 @@
-"""Command line entry points for the passive Codex listener."""
-
-from __future__ import annotations
+"""Small CLI: install hooks, run/start/stop the bridge, and list USB ports."""
 
 import argparse
-import os
+import logging
+from pathlib import Path
 import signal
 import subprocess
 import sys
-from pathlib import Path
+import time
 
-from .installer import install_global_hook
-from .listener import BackgroundListener, listener_is_running
-
-
-PID_PATH = Path.home() / ".codex" / "nyx.pid"
-LOG_PATH = Path.home() / ".codex" / "nyx.log"
+from .installer import install_hooks
+from .listener import Bridge, control
+from .protocol import runtime_dir
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="nyx",
-        description="Passive macOS notifications for Codex permission requests.",
-    )
-    subparsers = parser.add_subparsers(dest="command")
-    for name, help_text in (
-        ("start", "start the listener in the background"),
-        ("stop", "stop the background listener"),
-        ("status", "check whether the listener is running"),
-        ("listener", "run the listener in the foreground"),
-        ("install-hooks", "add the global Codex PermissionRequest hook"),
-    ):
-        subparsers.add_parser(name, help=help_text)
-    return parser
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Nyx: Codex to ESP32, no GUI or notifications.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    for name in ("run", "start"):
+        command = commands.add_parser(name, help=f"{name} the USB bridge")
+        command.add_argument("--port", required=True, help="USB serial path; see 'nyx ports'")
+        command.add_argument(
+            "--manual-approvals",
+            action="store_true",
+            help="opt in to a 20-second pre-prompt approval window; NOT for Approve for me",
+        )
+    for name in ("stop", "status", "ports", "install-hooks", "uninstall-hooks"):
+        commands.add_parser(name)
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "ports":
+            from serial.tools.list_ports import comports
 
-
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    command = args.command or "listener"
-    if command == "listener":
-        listener = BackgroundListener()
-        try:
-            listener.serve_forever()
-        except KeyboardInterrupt:
-            pass
-        except RuntimeError as exc:
-            print(exc, file=sys.stderr)
+            for port in comports():
+                print(f"{port.device}  {port.description}")
+            return 0
+        if args.command in {"install-hooks", "uninstall-hooks"}:
+            path = install_hooks(uninstall=args.command == "uninstall-hooks")
+            print(f"Updated {path}")
+            print("Restart Codex sessions and review/trust the changed hooks with /hooks.")
+            return 0
+        if args.command == "status":
+            status = control()
+            if not status:
+                print("Nyx is not running.")
+                return 1
+            print(
+                f"Bridge running (pid {status['pid']}); device: "
+                f"{'connected' if status['device'] else 'disconnected'}; "
+                f"manual approvals: {status['manual_approvals']}"
+            )
+            return 0
+        if args.command == "stop":
+            if control("stop"):
+                print("Stop requested. Codex will keep running.")
+            else:
+                print("Nyx is not running.")
+            return 0
+        if args.manual_approvals:
+            print(
+                "Manual mode: requests may wait up to 20 seconds before Codex's prompt.",
+                file=sys.stderr,
+            )
+            print(
+                "Do not use this mode with Approve for me; see docs/architecture.md.",
+                file=sys.stderr,
+            )
+        if args.command == "start":
+            if control():
+                print("Already running. Stop it first to change port or approval mode.")
+                return 1
+            runtime_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
+            log = runtime_dir() / "bridge.log"
+            command = [sys.executable, "-m", "nyx", "run", "--port", args.port]
+            if args.manual_approvals:
+                command.append("--manual-approvals")
+            with log.open("a") as handle:
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=handle,
+                    stderr=handle,
+                    start_new_session=True,
+                    cwd=str(Path(__file__).resolve().parent.parent),
+                )
+            for _ in range(30):
+                if process.poll() is not None:
+                    break
+                status = control()
+                if status and status.get("pid") == process.pid:
+                    print(f"Bridge started; it will reconnect when USB is available. Log: {log}")
+                    return 0
+                time.sleep(0.1)
+            print(f"Could not confirm startup. Check {log}", file=sys.stderr)
             return 1
-        finally:
-            listener.stop()
+        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        bridge = Bridge(args.port, manual_approvals=args.manual_approvals)
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, lambda *_: bridge.stopped.set())
+        bridge.run()
         return 0
-    if command == "start":
-        return _start_background()
-    if command == "stop":
-        return _stop_background()
-    if command == "status":
-        running = listener_is_running()
-        print("running" if running else "not running")
-        return 0 if running else 1
-    if command == "install-hooks":
-        path = install_global_hook()
-        print(f"Installed global Codex hook in {path}")
-        print("Restart Codex sessions, then approve this hook once in Codex's /hooks screen.")
-        return 0
-    raise AssertionError(f"unhandled command: {command}")
-
-
-def _start_background() -> int:
-    if listener_is_running():
-        print("Nyx listener is already running")
-        return 0
-    PID_PATH.parent.mkdir(parents=True, exist_ok=True)
-    project_root = Path(__file__).resolve().parent.parent
-    log_handle = LOG_PATH.open("a", encoding="utf-8")
-    process = subprocess.Popen(
-        [sys.executable, "-m", "nyx", "listener"],
-        cwd=project_root,
-        stdin=subprocess.DEVNULL,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-        close_fds=True,
-    )
-    log_handle.close()
-    PID_PATH.write_text(str(process.pid), encoding="utf-8")
-    print(f"Nyx listener started (pid {process.pid})")
-    print(f"Log: {LOG_PATH}")
-    return 0
-
-
-def _stop_background() -> int:
-    if not PID_PATH.exists():
-        print("Nyx listener is not running")
-        return 0
-    try:
-        pid = int(PID_PATH.read_text(encoding="utf-8").strip())
-        os.kill(pid, signal.SIGTERM)
-    except (OSError, ValueError):
-        pass
-    try:
-        PID_PATH.unlink()
-    except FileNotFoundError:
-        pass
-    print("Nyx listener stopped")
-    return 0
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"Nyx: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

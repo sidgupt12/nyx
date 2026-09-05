@@ -5,21 +5,23 @@ __pycache__/
 .venv/
 venv/
 env/
-Agents.md
 
 # Local configuration and secrets
+/AGENTS.md
 .env
 .env.*
 !.env.example
 
 # Test, coverage, and build output
 .pytest_cache/
+.ruff_cache/
 .coverage
 coverage.xml
 htmlcov/
 build/
 dist/
 *.egg-info/
+.pio/
 
 # macOS and editor files
 .DS_Store

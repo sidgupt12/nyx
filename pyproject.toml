@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nyx-controller"
+version = "0.2.0"
+description = "A small, local Codex to ESP32 bridge"
+requires-python = ">=3.10"
+dependencies = ["pyserial==3.5"]
+
+[project.optional-dependencies]
+dev = ["ruff==0.12.12"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[project.scripts]
+nyx = "nyx.__main__:main"
+
+[tool.setuptools]
+packages = ["nyx"]
