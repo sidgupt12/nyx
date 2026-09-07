@@ -48,7 +48,7 @@ class ListenerTests(unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory(dir="/tmp")
         self.path = Path(self.folder.name) / "nyx" / "bridge.sock"
         core = Controller(manual_approvals=True, approval_seconds=0.8)
-        self.bridge = Bridge("unused", path=self.path, controller=core)
+        self.bridge = Bridge("unused", path=self.path, controller=core, native=False)
         self.bridge.hardware = FakeHardware()
         self.thread = threading.Thread(target=self.bridge.run)
         self.thread.start()

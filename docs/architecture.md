@@ -10,6 +10,9 @@ Existing Codex session
                  ├─ controller: last-known session state + pending requests
                  ├─ opener: best-effort origin focus
                  └─ pyserial ↔ USB ↔ ESP32 firmware
+
+Desktop app's local follower socket ─┐
+Shared terminal app-server socket ───┴─ native.py → controller → USB
 ```
 
 Nyx never starts a Codex agent, sends it prompts, changes its approval policy,
@@ -36,22 +39,32 @@ forwarding every hook would resurrect false requests. Neither is a complete fix.
 
 The official [app-server protocol](https://learn.chatgpt.com/docs/app-server)
 has server-initiated approval requests and serverRequest/resolved events.
-Those are a better future integration point, but the documented interface
-does not by itself establish a passive, universal subscription to every
-independent CLI, VS Code, and desktop session. Nyx does not start/resume threads
-or take over their approval client to pretend this is solved.
+Nyx now uses those messages for terminal sessions already loaded on the shared
+local app-server. It calls `thread/resume` with only the existing thread ID to
+join the same live thread, without sending a turn or overriding its settings.
+It never loads a standalone session into a separate backend. Two-client testing
+against Codex 0.153.4 verified that a late follower receives the same pending
+request ID and its decision clears the request for both clients.
+
+The desktop adapter follows the installed app's private local IPC protocol:
+owner discovery/follower broadcasts, state snapshots (version 11), and patches.
+Its decision names the conversation ID, request ID, and owning app client.
+It keeps only request/runtime fields in memory, not chat history. Frame limits,
+revision checks, reconnect invalidation, and supported-method checks fail closed.
+This is independently written protocol integration, not copied vendor code or
+a modification to the desktop installation. App updates may require adapter changes.
 
 We therefore ship:
 
 | Mode | Behavior |
 | --- | --- |
-| Passive (default) | Forward lifecycle state; permission hooks return without a decision or hardware prompt |
-| Manual (explicit opt-in) | Offer a physical decision for up to 20 seconds before normal approval handling |
-| Approve for me | Use passive mode; reliable human-only fallback events are not implemented |
+| Native (default) | Hooks return immediately; live native requests enable hardware decisions alongside the normal UI |
+| Legacy manual (explicit opt-in) | A 20-second pre-prompt hook window; not simultaneous native UI control |
+| Approve for me | No hook-based prompt; a request actually routed to the native client can still be answered |
 
-Known explicit dontAsk/bypassPermissions/auto-review metadata is skipped as
-defense in depth, not a claim of reliable detection. Unknown routing metadata
-in opt-in manual mode is not proof of human necessity.
+Legacy manual mode skips known automatic-review metadata as defense in depth.
+Native mode does not suppress a real native request just because that session
+uses automatic review. An upstream hook alone cannot create a native offer.
 Do not enable manual mode while any hooked session is using automatic review:
 the current hook contract cannot enforce that distinction for you.
 
@@ -62,27 +75,70 @@ the current hook contract cannot enforce that distinction for you.
 - Allow/deny consumes the request once. There is no "allow for session" action.
 - No default approval. Timeout/disconnect/shutdown/canceled hook means no decision.
 - Interrupt, Stop, and SessionEnd cancel that session's pending requests.
-- USB reboot and missing heartbeat cancel all pending requests; no action replay.
-- Hook input and serial lines are bounded. At most 32 sessions and 16 requests remain in memory.
+- Source disconnect and native resolution invalidate native buttons. Source
+  reconnect clears queued decisions and assigns fresh tokens.
+- Hook input and serial lines are bounded. At most 32 hook sessions and 16 legacy
+  hook requests remain in memory. Native state frames are bounded separately.
 - There is no persistent approval queue. Restarting the bridge loses state safely.
 - The display has only a preview. Use Open and inspect the full operation when needed.
 
-Only the hook's final JSON reaches Codex. A USB result of "submitted" means the
-bridge accepted the button, not that Codex executed the operation; another hook
-or policy may still deny it. Native approval UI does not appear until this
-optional synchronous hook finishes. That bounded delay is an explicit tradeoff.
+Native decisions go directly to the existing request. A USB result of "queued"
+means Nyx accepted the button; native resolution remains authoritative. Duplicate
+button presses cannot re-arm an in-flight decision. For prompts offering Cancel
+instead of Decline, the reject button cancels the turn. Broad session grants,
+permission-subset forms, and question forms remain in the native UI.
+
+In legacy manual mode only, hook output supplies the decision and native UI
+does not appear until that synchronous hook returns. Do not enable that mode
+when you want simultaneous native UI and hardware control.
 
 ## State and origin limits
 
-IDLE/RUNNING are last-known hook states, not process liveness probes. A crash,
+Without a native subscription, IDLE/RUNNING are last-known hook states. A crash,
 missing hook, or untrusted hook can leave them stale. Sessions before bridge
 startup are not reconstructed. Graceful SessionEnd removes the session.
 
-Origin metadata is best effort; daemons may not inherit a terminal's environment.
+Origin metadata is best effort; a shared daemon does not identify each terminal UI.
+Nyx refuses to use the daemon's inherited TTY as an Open target. For a unique
+`codex resume --remote unix:// SESSION_ID` process it can match that CLI's TTY
+in Apple Terminal. Other shared-server Open targets remain unsupported.
 Terminal and iTerm routing matches the recorded TTY/session ID and does not type.
 VS Code focus is app-level, not exact terminal selection. Unidentified origins
 do nothing; lack of a TTY is not treated as proof of a Codex desktop chat.
-Exact Codex desktop-thread routing remains future work, not a fake Terminal fallback.
+For desktop tasks, Open reads only the bounded first `session_meta` record of the
+matching local rollout, checks its session ID and `codex_work_desktop` originator,
+and opens `codex://threads/<session_id>` with bundle `com.openai.codex`. That bundle
+is named ChatGPT on the tested Mac. The URL route was inspected in desktop build
+26.901.31953; it is not a promised stable public API. Metadata format changes fail
+to no action, never to a random Terminal. A `source` value of `vscode` alone does
+not identify desktop origin. Terminal/iTerm/VS Code metadata keeps routing priority.
+
+The lookup runs only when Open is pressed. It does not poll transcripts or read
+conversation messages, and it refuses files outside the local sessions directory.
+Restart the Mac bridge after updating the opener; no firmware or hook reinstall
+is needed. Sessions reappear as their next trusted hooks arrive.
+
+### Desktop state and OLED metadata
+
+The documented hook payload supplies the session ID, transcript path, cwd, and
+active model. Current desktop builds can record `task_complete` without reliably
+delivering Nyx's `Stop` hook. For desktop sessions only, a background observer
+therefore reads a bounded 8 MB tail once, then reads only newly appended complete
+records. It extracts `task_started`, `task_complete`, `turn_aborted`, model, and
+effort; it ignores prompts, responses, and tool contents. Files outside
+`~/.codex/sessions` and malformed or oversized records are ignored. Terminal
+status remains hook-owned, so transcript fallback cannot incorrectly mark a live
+terminal task idle.
+
+Every session ID maps deterministically to a short two-word alias such as
+`Quantum Fox`. The alias is display-only and does not rename the Codex task.
+
+The documented `PermissionRequest` hook does not include `approvals_reviewer`.
+To avoid showing automatically reviewed internal requests as human pauses, the
+short-lived hook reads the latest bounded `turn_context` and copies only its
+reviewer value into private Nyx metadata for legacy mode. Default native mode
+does not infer an actionable request from this field. Its live native subscription
+takes precedence over transcript status.
 
 ## Reproduce the build
 

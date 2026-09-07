@@ -34,7 +34,7 @@ hold for approve; no auto-repeat. Firmware must release/re-arm after view change
 The complete selected view is sent every 250 ms, so reconnect needs no event replay:
 
 ```json
-{"v":1,"type":"state","view_id":"opaque-id","session":"1234abcd","project":"nyx","status":"PERMISSION_REQUIRED","detail":"echo hello","remaining":19,"index":1,"count":2,"manual":true}
+{"v":1,"type":"state","view_id":"opaque-id","session":"1234abcd","name":"Neon Raven","surface":"APP","project":"nyx","model":"gpt-6-astra","effort":"high","status":"PERMISSION_REQUIRED","detail":"echo hello","remaining":19,"actionable":true,"index":1,"count":2,"manual":true}
 ```
 
 Status is IDLE, RUNNING, or PERMISSION_REQUIRED. With no sessions, count/index
@@ -42,6 +42,19 @@ are zero and view_id is empty. Detail is a preview of at most 240 characters,
 not a complete security review. The device derives OFFLINE locally after three
 seconds without state. The Mac also drops pending decisions after three seconds
 without a device heartbeat.
+
+`name` is a stable two-word alias derived locally from the session ID. `surface`
+is `APP` or `TERM`; firmware renders it as a pixel icon because the SH1106 font
+does not contain Unicode emoji. Model and effort are informational and may be
+empty when an older or unknown Codex transcript format cannot provide them.
+`actionable` distinguishes a hardware decision window from a passively observed
+Codex prompt. When false, the OLED offers Open only; approve/reject remain inert.
+
+`native: true` identifies a request shared with Codex's existing approval UI.
+For these requests `remaining` is zero because there is no Nyx deadline. The
+firmware displays DECIDE / OPEN without a countdown. Native request tokens change
+after reconnect; on-screen resolution removes them. `status: queued` acknowledges
+that Nyx queued a native decision, not that Codex has executed the operation.
 
 ```json
 {"v":1,"type":"result","ok":true,"status":"submitted"}

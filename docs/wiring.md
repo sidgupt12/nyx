@@ -32,9 +32,9 @@ The OLED is monochrome blue; it cannot display RGB colors.
 
 ## USB
 
-Use a data cable in the S3's **native USB** connector for this configuration.
-If your board has both USB/UART and native USB connectors, check its labels.
-The firmware explicitly enables native USB CDC. The port can change after upload:
+Use a data cable in the board's **USB/UART** connector—the same connector used
+to upload the firmware. On the tested dual-USB board, macOS identifies its WCH
+bridge as `USB Single Serial`. The port can change after reconnecting:
 run `nyx ports` again. Do not choose Bluetooth-Incoming-Port or debug-console.
 
 The PlatformIO target is the default 8 MB flash DevKitC-1 profile, without PSRAM.

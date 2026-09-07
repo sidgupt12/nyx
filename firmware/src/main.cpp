@@ -8,8 +8,11 @@
 U8G2_SH1106_128X64_NONAME_F_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
 String viewId, status = "OFFLINE", project, session, preview;
+String friendlyName, surface, model, effort;
 int remaining = 0, viewIndex = 0, viewCount = 0;
 bool connected = false;
+bool actionable = false;
+bool nativeApproval = false;
 uint32_t lastState = 0, lastHeartbeat = 0, lastDraw = 0;
 char line[4097];
 size_t lineSize = 0;
@@ -86,8 +89,14 @@ void acceptLine() {
   status = message["status"].as<String>();
   project = readable(message["project"] | "");
   session = readable(message["session"] | "");
+  friendlyName = readable(message["name"] | "Codex Session");
+  surface = readable(message["surface"] | "");
+  model = readable(message["model"] | "");
+  effort = readable(message["effort"] | "");
   preview = readable(message["detail"] | "");
   remaining = message["remaining"] | 0;
+  actionable = message["actionable"] | false;
+  nativeApproval = message["native"] | false;
   viewIndex = message["index"] | 0;
   viewCount = message["count"] | 0;
   connected = true;
@@ -135,18 +144,38 @@ void draw(uint32_t now) {
     display.drawStr(0, 28, "WAITING FOR CODEX");
     display.drawStr(0, 43, "Start a trusted hook");
   } else {
-    display.drawStr(0, 24, (project + " " + session).substring(0, 21).c_str());
+    // The display font has no Unicode emoji, so these tiny pixel icons are
+    // sharper and more reliable: a window for App, a >_ prompt for Terminal.
+    if (surface == "APP") {
+      display.drawFrame(0, 17, 12, 9);
+      display.drawHLine(1, 19, 10);
+      display.drawPixel(2, 18);
+      display.drawPixel(4, 18);
+    } else {
+      display.drawFrame(0, 17, 12, 9);
+      display.drawLine(2, 20, 4, 22);
+      display.drawLine(4, 22, 2, 24);
+      display.drawHLine(6, 24, 3);
+    }
+    display.drawStr(16, 25, friendlyName.substring(0, 18).c_str());
     if (status == "PERMISSION_REQUIRED") {
-      display.drawStr(0, 35, ("DECIDE " + String(remaining) + "s / OPEN").c_str());
+      if (actionable)
+        display.drawStr(0, 36, nativeApproval ? "DECIDE / OPEN" :
+                        ("DECIDE " + String(remaining) + "s / OPEN").c_str());
+      else
+        display.drawStr(0, 36, "PERMISSION NEEDED");
       // Page the preview; never pretend a short OLED preview is the full command.
       size_t pages = max(size_t(1), (preview.length() + 41) / 42);
       size_t offset = ((now / 2500) % pages) * 42;
-      display.drawStr(0, 45, preview.substring(offset, offset + 21).c_str());
-      display.drawStr(0, 54, preview.substring(offset + 21, offset + 42).c_str());
-      display.drawStr(0, 64, "Hold YES / NO / OPEN");
+      display.drawStr(0, 47, preview.substring(offset, offset + 21).c_str());
+      display.drawStr(0, 57, preview.substring(offset + 21, offset + 42).c_str());
+      display.drawStr(0, 64, actionable ? "Hold YES / NO / OPEN" : "Push knob: open");
     } else {
-      display.drawStr(0, 39, status.c_str());
-      display.drawStr(0, 56, "Turn: select  Push:open");
+      display.drawStr(0, 43, status.c_str());
+      String runtime = model;
+      if (runtime.startsWith("gpt-")) runtime.remove(0, 4);
+      if (!effort.isEmpty()) runtime += " / " + effort;
+      display.drawStr(0, 59, runtime.substring(0, 21).c_str());
     }
   }
   display.sendBuffer();

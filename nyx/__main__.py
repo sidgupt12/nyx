@@ -49,6 +49,9 @@ def main(argv=None):
                 f"{'connected' if status['device'] else 'disconnected'}; "
                 f"manual approvals: {status['manual_approvals']}"
             )
+            for source, connected in status.get('native', {}).items():
+                count = status.get('native_sessions', {}).get(source, 0)
+                print(f"Native {source}: {'connected' if connected else 'not connected'} ({count} sessions)")
             return 0
         if args.command == "stop":
             if control("stop"):

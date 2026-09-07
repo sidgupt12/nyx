@@ -7,6 +7,7 @@ import time
 import uuid
 
 from .protocol import APPROVAL_SECONDS, VERSION
+from .session_info import funky_name, terminal_surface
 
 
 @dataclass
@@ -29,6 +30,7 @@ class Controller:
         self.lock = threading.RLock()
         self.sessions = OrderedDict()
         self.pending = OrderedDict()
+        self.native_offers = OrderedDict()
         self.selected = ""
 
     def event(self, payload, device_ready):
@@ -39,16 +41,27 @@ class Controller:
         name = payload.get("hook_event_name")
         with self.lock:
             if name == "SessionEnd":
-                self.cancel_session(session_id)
-                self.sessions.pop(session_id, None)
+                self.remove_session(session_id)
                 return None
-            session = self.sessions.setdefault(session_id, {"status": "IDLE"})
+            session = self.sessions.setdefault(
+                session_id, {"status": "IDLE", "name": funky_name(session_id)}
+            )
             session["payload"] = payload
+            if session.get('native_source') == 'terminal':
+                payload.setdefault('_nyx', {})['shared_server'] = True
+            surface = terminal_surface(payload)
+            if surface and not session.get('native_source'):
+                session["surface"] = surface
+            model = payload.get("model")
+            if isinstance(model, str) and model:
+                session["model"] = model
             self.sessions.move_to_end(session_id)
             if name in {"UserPromptSubmit", "PostToolUse"}:
                 session["status"] = "RUNNING"
+                session["detail"] = ""
             elif name in {"Stop", "Interrupt"}:
                 session["status"] = "IDLE"
+                session["detail"] = ""
                 self.cancel_session(session_id)
             while len(self.sessions) > 32:
                 oldest = next(iter(self.sessions))
@@ -56,10 +69,14 @@ class Controller:
                 self.sessions.pop(oldest)
             if name != "PermissionRequest":
                 return None
-            session["status"] = "RUNNING"
-            if not self.manual_approvals or not device_ready or automatic_mode(payload):
+            if session.get('native_source') or not self.manual_approvals:
+                # The hook runs before automatic review. Only a live UI request
+                # can tell us that a person really needs to answer.
                 return None
-            if len(self.pending) >= 16:
+            if automatic_mode(payload, session.get("approvals_reviewer", "")):
+                # An automatic reviewer can resolve this without a human pause.
+                session["status"] = "RUNNING"
+                session["detail"] = ""
                 return None
             inputs = payload.get("tool_input", {})
             detail = (
@@ -67,14 +84,119 @@ class Controller:
                 if isinstance(inputs, dict)
                 else ""
             )
+            detail = str(detail or payload.get("tool_name", "Check Codex"))[:240]
+            # Observing a real manual prompt is independent from allowing the
+            # hardware to answer it. Passive mode reports + opens it safely.
+            session["status"] = "PERMISSION_REQUIRED"
+            session["detail"] = detail
+            if not self.manual_approvals or not device_ready or len(self.pending) >= 16:
+                return None
             request = Request(
                 session_id,
-                str(detail or payload.get("tool_name", "Check Codex"))[:240],
+                detail,
                 self.clock() + self.approval_seconds,
             )
             self.pending[request.id] = request
             self.selected = request.id
             return request
+
+    def session_payloads(self):
+        with self.lock:
+            return {
+                session_id: dict(session.get("payload", {}))
+                for session_id, session in self.sessions.items()
+            }
+
+    def set_native_offers(self, offers):
+        with self.lock:
+            old = set(self.native_offers)
+            self.native_offers = OrderedDict(
+                (o['token'], o) for o in offers if o['session_id'] in self.sessions
+            )
+            new = [key for key in self.native_offers if key not in old]
+            if new:
+                self.selected = new[0]
+
+    def native_state(self, session_id, source, state):
+        with self.lock:
+            session = self.sessions.get(session_id)
+            if session is None:
+                return
+            session['native_source'] = source
+            session['surface'] = 'APP' if source == 'desktop' else 'TERM'
+            if source == 'terminal':
+                # A daemon's inherited TTY is not the terminal UI's TTY.
+                metadata = session.setdefault('payload', {}).setdefault('_nyx', {})
+                metadata['shared_server'] = True
+            for target, key in [('model', 'latestModel'), ('effort', 'latestReasoningEffort')]:
+                if isinstance(state.get(key), str):
+                    session[target] = state[key]
+            runtime = state.get('threadRuntimeStatus')
+            kind = runtime.get('type') if isinstance(runtime, dict) else runtime
+            if kind in {'idle', 'notLoaded', 'systemError'}:
+                session['status'] = 'IDLE'
+            elif kind == 'active':
+                session['status'] = 'RUNNING'
+            session['detail'] = ''
+            # Other native inputs remain visible with Open, but cannot be
+            # answered with a binary button (forms, permission subsets, etc.).
+            human_methods = {
+                'item/commandExecution/requestApproval', 'item/fileChange/requestApproval',
+                'item/permissions/requestApproval', 'item/tool/requestUserInput',
+                'mcpServer/elicitation/request',
+            }
+            if any(r.get('method') in human_methods for r in state.get('requests', [])):
+                session['status'] = 'PERMISSION_REQUIRED'
+                session['detail'] = 'Review request in Codex'
+
+    def clear_native_source(self, source):
+        with self.lock:
+            for session in self.sessions.values():
+                if session.get('native_source') == source:
+                    session.pop('native_source', None)
+
+    def session_surface(self, session_id):
+        with self.lock:
+            return str(self.sessions.get(session_id, {}).get("surface", ""))
+
+    def remove_session(self, session_id):
+        """Forget one closed Codex process and invalidate its old buttons."""
+        with self.lock:
+            self.cancel_session(session_id)
+            self.sessions.pop(session_id, None)
+            self.native_offers = OrderedDict(
+                (k, o) for k, o in self.native_offers.items() if o['session_id'] != session_id
+            )
+            if self.selected == session_id:
+                self.selected = ""
+
+    def reconcile(
+        self,
+        session_id,
+        *,
+        surface="",
+        status="",
+        model="",
+        effort="",
+        approvals_reviewer="",
+    ):
+        """Merge optional observer fields without creating phantom sessions."""
+        with self.lock:
+            session = self.sessions.get(session_id)
+            if session is None:
+                return
+            for key, value in {
+                "surface": surface,
+                "model": model,
+                "effort": effort,
+                "approvals_reviewer": approvals_reviewer,
+            }.items():
+                if isinstance(value, str) and value:
+                    session[key] = value
+            if not session.get('native_source') and surface == "APP" and status in {"IDLE", "RUNNING"}:
+                session["status"] = status
+                if status == "IDLE":
+                    self.cancel_session(session_id)
 
     def finish(self, request, decision=None):
         with self.lock:
@@ -101,7 +223,8 @@ class Controller:
     def _views(self):
         # Each pending request gets its own view, even within the same session.
         waiting = {r.session_id for r in self.pending.values()}
-        return list(self.pending) + [s for s in self.sessions if s not in waiting]
+        waiting.update(o['session_id'] for o in self.native_offers.values())
+        return list(self.native_offers) + list(self.pending) + [s for s in self.sessions if s not in waiting]
 
     def snapshot(self):
         with self.lock:
@@ -110,7 +233,8 @@ class Controller:
             if self.selected not in views:
                 self.selected = views[0] if views else ""
             request = self.pending.get(self.selected)
-            session_id = request.session_id if request else self.selected
+            native = self.native_offers.get(self.selected)
+            session_id = native['session_id'] if native else request.session_id if request else self.selected
             session = self.sessions.get(session_id, {})
             payload = session.get("payload", {})
             cwd = str(payload.get("cwd", ""))
@@ -119,10 +243,16 @@ class Controller:
                 "type": "state",
                 "view_id": self.selected,
                 "session": session_id[:8],
+                "name": str(session.get("name", "Codex Session"))[:24],
                 "project": cwd.rstrip("/").split("/")[-1][:32],
-                "status": "PERMISSION_REQUIRED" if request else session.get("status", "IDLE"),
-                "detail": request.detail if request else "",
+                "surface": str(session.get("surface", ""))[:8],
+                "model": str(session.get("model", ""))[:32],
+                "effort": str(session.get("effort", ""))[:12],
+                "status": "PERMISSION_REQUIRED" if request or native else session.get("status", "IDLE"),
+                "detail": native['detail'] if native else request.detail if request else str(session.get("detail", ""))[:240],
                 "remaining": max(0, int(request.deadline - self.clock())) if request else 0,
+                "actionable": request is not None or native is not None,
+                "native": native is not None,
                 "index": views.index(self.selected) + 1 if views else 0,
                 "count": len(views),
                 "manual": self.manual_approvals,
@@ -142,23 +272,28 @@ class Controller:
                 self.selected = views[(views.index(view) + step) % len(views)]
                 return {"ok": True}, None
             request = self.pending.get(view)
+            native = self.native_offers.get(view)
             if action == "open":
-                session_id = request.session_id if request else view
+                session_id = native['session_id'] if native else request.session_id if request else view
                 return {"ok": True}, self.sessions[session_id]["payload"]
+            if native and action in {'approve', 'reject'}:
+                return {'ok': True}, {'native_token': view, 'native_action': action}
             if action in {"approve", "reject"} and request:
                 self.finish(request, "allow" if action == "approve" else "deny")
                 return {"ok": True, "status": "submitted"}, None
             return {"ok": False, "error": "no_pending_request"}, None
 
 
-def automatic_mode(payload):
+def automatic_mode(payload, known_reviewer=""):
     """Recognize explicit modes, NOT a reliable post-auto-review detector.
 
     The documented hook input has no final human-review routing flag.
     Manual mode is opt-in for that reason; see docs/architecture.md.
     """
     mode = str(payload.get("permission_mode", "")).lower()
-    reviewer = str(payload.get("approvals_reviewer", "")).lower()
+    metadata = payload.get("_nyx", {})
+    private_reviewer = metadata.get("approvals_reviewer", "") if isinstance(metadata, dict) else ""
+    reviewer = str(payload.get("approvals_reviewer") or private_reviewer or known_reviewer).lower()
     return mode in {"dontask", "bypasspermissions"} or reviewer in {
         "auto_review",
         "auto",

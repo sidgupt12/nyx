@@ -7,6 +7,7 @@ import subprocess
 import sys
 
 from .protocol import APPROVAL_SECONDS, EVENTS, MAX_HOOK, encode, receive, socket_path
+from .session_info import inspect_rollout
 
 
 def origin():
@@ -20,17 +21,38 @@ def origin():
             "vscode_ipc_hook_cli": "VSCODE_IPC_HOOK_CLI",
         }.items()
     }
-    try:
-        tty = subprocess.check_output(
-            ["ps", "-o", "tty=", "-p", str(os.getppid())],
-            text=True,
-            timeout=0.2,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-        metadata["tty"] = "/dev/" + tty if tty and tty != "??" else ""
-    except (OSError, subprocess.SubprocessError):
-        metadata["tty"] = ""
+    pid, tty = codex_process()
+    if pid is not None:
+        # This is only a liveness identity. Nyx never controls the process.
+        metadata["origin_pid"] = pid
+    metadata["tty"] = tty
     return metadata
+
+
+def codex_process():
+    """Find the verified Codex ancestor and the hook launcher's TTY."""
+    pid = os.getppid()
+    tty = ""
+    for depth in range(8):
+        if pid <= 1:
+            break
+        try:
+            output = subprocess.check_output(
+                ["ps", "-o", "ppid=,tty=,comm=", "-p", str(pid)],
+                text=True,
+                timeout=0.2,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            parent_text, current_tty, command = output.split(maxsplit=2)
+            parent = int(parent_text)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            break
+        if depth == 0 and current_tty != "??":
+            tty = "/dev/" + current_tty
+        if os.path.basename(command).lower() == "codex":
+            return pid, tty
+        pid = parent
+    return None, tty
 
 
 def run_hook(stdin=None, stdout=None, path=None):
@@ -43,6 +65,14 @@ def run_hook(stdin=None, stdout=None, path=None):
         if not isinstance(payload, dict) or payload.get("hook_event_name") not in EVENTS:
             return 0
         payload["_nyx"] = origin()
+        # Permission hooks do not document who will review the request. Current
+        # session metadata does, so copy only that setting for Nyx's filter.
+        if payload["hook_event_name"] == "PermissionRequest" and isinstance(
+            payload.get("transcript_path"), str
+        ):
+            reviewer = inspect_rollout(payload).approvals_reviewer
+            if reviewer:
+                payload["_nyx"]["approvals_reviewer"] = reviewer
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             connection.settimeout(0.3)
             connection.connect(str(path or socket_path()))
