@@ -184,6 +184,10 @@ class SessionInfoTests(unittest.TestCase):
         )
         observer.poll_once()
         self.assertEqual(core.snapshot()["count"], 1)
+        self.assertEqual(
+            core.session_payloads()[self.SESSION]["_nyx"]["client_tty"],
+            "/dev/ttys003",
+        )
         clients[0] = {}
         observer.poll_once()
         now[0] += 3

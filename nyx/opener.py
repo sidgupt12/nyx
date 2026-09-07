@@ -2,11 +2,9 @@
 
 import logging
 import subprocess
-import shlex
-from pathlib import Path
 from uuid import UUID
 
-from .session_info import inspect_rollout
+from .session_info import inspect_rollout, remote_terminal_clients
 
 LOG = logging.getLogger(__name__)
 
@@ -15,14 +13,16 @@ def open_session(payload):
     metadata = payload.get("_nyx", {})
     term = str(metadata.get("term_program", "")).lower()
     tty = str(metadata.get("tty", ""))
-    if metadata.get('shared_server'):
-        tty = remote_terminal_tty(payload.get('session_id', ''))
+    if metadata.get("shared_server"):
+        tty = remote_terminal_tty(
+            payload.get("session_id", ""), str(metadata.get("client_tty", ""))
+        )
         if not tty:
-            LOG.info('Shared-server terminal is not uniquely identifiable; no window opened')
+            LOG.info("Shared-server terminal is not uniquely identifiable; no window opened")
             return
         # Terminal's scripting interface still checks that this exact TTY exists.
         # It cannot accidentally activate the daemon's original terminal.
-        term = 'apple_terminal'
+        term = "apple_terminal"
     try:
         if term == "apple_terminal" and tty:
             script = """on run argv
@@ -81,36 +81,22 @@ def _run(command):
     subprocess.run(command, capture_output=True, check=True, timeout=2)
 
 
-def remote_terminal_tty(session_id):
-    """Match an explicit `codex resume --remote unix:// SESSION_ID` process.
-
-    New tasks without an ID in their command line, multiple UIs for one task,
-    and unsupported terminal apps deliberately have no guessed Open target.
-    """
+def remote_terminal_tty(session_id, preferred=""):
+    """Return a verified live TTY for one shared-server terminal session."""
     try:
         if str(UUID(session_id)) != session_id:
-            return ''
-        output = subprocess.run(
-            ['ps', '-axo', 'tty=,comm=,args='], capture_output=True,
-            text=True, check=True, timeout=1,
-        ).stdout
-        matches = set()
-        for line in output.splitlines():
-            parts = line.strip().split(None, 2)
-            if len(parts) != 3 or Path(parts[1]).name != 'codex':
-                continue
-            tty, _, command = parts
-            args = shlex.split(command)
-            if 'resume' not in args or '--remote' not in args:
-                continue
-            remote_index = args.index('--remote') + 1
-            if remote_index >= len(args) or args[remote_index] != 'unix://':
-                continue
-            if session_id in args[args.index('resume') + 1:] and tty.startswith('ttys'):
-                matches.add('/dev/' + tty)
-        return matches.pop() if len(matches) == 1 else ''
-    except (ValueError, OSError, subprocess.SubprocessError):
-        return ''
+            return ""
+        clients = remote_terminal_clients()
+        if clients is None:
+            return ""
+        if preferred in clients:
+            identities = clients[preferred]
+            if not identities or session_id in identities:
+                return preferred
+        matches = {tty for tty, identities in clients.items() if session_id in identities}
+        return matches.pop() if len(matches) == 1 else ""
+    except (ValueError, OSError):
+        return ""
 
 
 def desktop_link(payload, *, sessions_dir=None):

@@ -3,7 +3,6 @@
 import copy
 import unittest
 from unittest.mock import patch
-import subprocess
 
 from nyx.appserver import AppServer
 from nyx.controller import Controller
@@ -258,18 +257,31 @@ class NativeTests(unittest.TestCase):
 
     def test_explicit_resumed_terminal_match_must_be_unique(self):
         sid = "01a02ab0-5de7-7c80-9169-4bfcfc03f890"
-        row = f"ttys003 /opt/bin/codex codex resume --remote unix:// {sid}\n"
-        with patch(
-            "nyx.opener.subprocess.run", return_value=subprocess.CompletedProcess([], 0, row)
-        ):
+        with patch("nyx.opener.remote_terminal_clients", return_value={"/dev/ttys003": {sid}}):
             self.assertEqual(remote_terminal_tty(sid), "/dev/ttys003")
         with patch(
-            "nyx.opener.subprocess.run",
-            return_value=subprocess.CompletedProcess(
-                [], 0, row + row.replace("ttys003", "ttys004")
-            ),
+            "nyx.opener.remote_terminal_clients",
+            return_value={"/dev/ttys003": {sid}, "/dev/ttys004": {sid}},
         ):
             self.assertEqual(remote_terminal_tty(sid), "")
+
+    def test_matched_bare_terminal_client_is_a_valid_open_target(self):
+        sid = "01a02ab0-5de7-7c80-9169-4bfcfc03f890"
+        with patch("nyx.opener.remote_terminal_clients", return_value={"/dev/ttys003": set()}):
+            self.assertEqual(remote_terminal_tty(sid, "/dev/ttys003"), "/dev/ttys003")
+
+    def test_open_uses_the_lifecycle_observers_exact_terminal(self):
+        sid = "01a02ab0-5de7-7c80-9169-4bfcfc03f890"
+        payload = {
+            "session_id": sid,
+            "_nyx": {"shared_server": True, "client_tty": "/dev/ttys003"},
+        }
+        with (
+            patch("nyx.opener.remote_terminal_clients", return_value={"/dev/ttys003": set()}),
+            patch("nyx.opener._run") as run,
+        ):
+            open_session(payload)
+        self.assertEqual(run.call_args.args[0][-1], "/dev/ttys003")
 
     def test_reject_uses_cancel_when_that_is_the_native_choice(self):
         r = request()

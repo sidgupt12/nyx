@@ -451,13 +451,16 @@ class SessionObserver:
                 self.terminal_ttys[session_id] = exact[0]
             tty = self.terminal_ttys.get(session_id)
             if tty in clients:
+                self.controller.set_terminal_tty(session_id, tty)
                 self.dead_since.pop(session_id, None)
                 return False
             if tty is None:
                 claimed = {value for key, value in self.terminal_ttys.items() if key != session_id}
                 available = set(clients) - claimed
                 if len(available) == 1:
-                    self.terminal_ttys[session_id] = available.pop()
+                    tty = available.pop()
+                    self.terminal_ttys[session_id] = tty
+                    self.controller.set_terminal_tty(session_id, tty)
                     self.dead_since.pop(session_id, None)
                     return False
                 if clients:
