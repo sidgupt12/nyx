@@ -15,7 +15,7 @@ Do not connect a 5 V signal to an ESP32 GPIO.
 | OLED GND | GND | Common ground |
 | OLED SDA | GPIO 8 | Same as the test project |
 | OLED SCK/SCL | GPIO 9 | SCK on this module means I2C clock |
-| Approve button | GPIO 5 ↔ button ↔ GND | Existing button; hold 700 ms |
+| Approve button | GPIO 5 ↔ button ↔ GND | Existing button; press once |
 | Reject button | GPIO 12 ↔ button ↔ GND | New second button |
 | Encoder CLK/A | GPIO 6 | Same as the test project |
 | Encoder DT/B | GPIO 7 | Same as the test project |
@@ -52,7 +52,7 @@ A C3 Super Mini is not pin-compatible and cannot use this S3 build.
 7. Only then opt in to manual approvals and test one harmless real permission.
 8. Unplug during a pending request: Codex must fall back, and reconnection must
    not allow the old button to approve anything.
-9. Hold approve before a new request arrives: it must require release and a new hold.
+9. Hold approve before a new request arrives: it must require release and a fresh press.
 
 If the display stays blank, stop and check supply, ground, SDA/SCL, address
 (default 0x3C), and the SH1106 model. For 0x3D change only OLED_ADDRESS in pins.h.

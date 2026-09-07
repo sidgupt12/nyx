@@ -169,7 +169,7 @@ void draw(uint32_t now) {
       size_t offset = ((now / 2500) % pages) * 42;
       display.drawStr(0, 47, preview.substring(offset, offset + 21).c_str());
       display.drawStr(0, 57, preview.substring(offset + 21, offset + 42).c_str());
-      display.drawStr(0, 64, actionable ? "Hold YES / NO / OPEN" : "Push knob: open");
+      display.drawStr(0, 64, actionable ? "YES / NO / OPEN" : "Push knob: open");
     } else {
       display.drawStr(0, 43, status.c_str());
       String runtime = model;
@@ -208,7 +208,7 @@ void loop() {
                              : "{\"v\":1,\"type\":\"hello\"}");
     lastHeartbeat = now;
   }
-  bool yes = approve.update(now, 700);
+  bool yes = approve.update(now);
   bool no = reject.update(now);
   bool open = openButton.update(now);
   if (connected) {

@@ -26,8 +26,8 @@ Button/encoder action, using exactly the view ID currently displayed:
 ```
 
 Actions: approve, reject, open, next, previous. Approve/reject only work on a
-pending permission view, not an ordinary session. Firmware requires a 700 ms
-hold for approve; no auto-repeat. Firmware must release/re-arm after view changes.
+pending permission view, not an ordinary session. Approve has no auto-repeat;
+firmware requires a release and fresh press after view changes.
 
 ## Mac → device
 

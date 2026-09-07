@@ -159,8 +159,8 @@ adapter. Shared-server sessions may continue when their terminal UI closes.
 Hooks running in a shared daemon may lack the individual terminal's TTY; exact
 Open routing for these sessions is not yet guaranteed.
 
-When connected, the OLED displays the native request. Hold YES for 700 ms to
-allow once, or press NO to decline. If Codex offers Cancel instead of Decline,
+When connected, the OLED displays the native request. Press YES to allow once,
+or press NO to decline. If Codex offers Cancel instead of Decline,
 NO cancels the turn, matching its native refusal choice. You can also use the
 normal on-screen buttons. There is no Nyx countdown for native requests.
 Broader session grants and input forms must be answered in Codex.
@@ -178,7 +178,7 @@ When a real PermissionRequest hook fires with the device connected:
 
 1. The OLED shows a stable funky session name, App/Terminal icon, live state,
    model, effort, request preview, and remaining time.
-2. Hold the approve button for 700 ms to allow that request once; or press reject.
+2. Press the approve button to allow that request once; or press reject.
 3. Encoder press requests Open. Inspect the full operation in Codex when the tiny
    preview is insufficient. Never approve an operation you do not understand.
 4. If nobody answers within 20 seconds, Nyx makes **no decision** and Codex proceeds
