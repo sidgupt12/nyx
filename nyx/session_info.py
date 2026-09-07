@@ -131,10 +131,25 @@ def remote_terminal_clients():
             continue
         try:
             args = shlex.split(parts[2])
-            remote = args.index("--remote") + 1
-        except (ValueError, IndexError):
+        except ValueError:
             continue
-        if remote >= len(args) or not args[remote].startswith("unix://"):
+        # Current managed Codex can connect to its daemon with a plain `codex`
+        # command, so `--remote` is no longer a required process marker.
+        non_interactive = {
+            "app-server",
+            "exec",
+            "review",
+            "queue",
+            "archive",
+            "delete",
+            "mcp-server",
+            "apply",
+            "doctor",
+            "sandbox",
+            "debug",
+            "completion",
+        }
+        if any(value in non_interactive for value in args[1:]):
             continue
         session_ids = set()
         if "resume" in args:
@@ -192,15 +207,12 @@ def _origin_info(path, session_id):
         surface = ""
         if originator in {"codex_work_desktop", "Codex Desktop"}:
             surface = "APP"
-        elif originator == "codex-tui":
+        elif originator in {"codex-tui", "nyx"}:
+            # A TUI using the shared daemon is currently recorded with the
+            # connected follower's client name rather than `codex-tui`.
             surface = "TERM"
         source = data.get("source")
-        # Nyx never creates user tasks in normal operation. The `nyx` origin is
-        # reserved for its native integration validator, so it must not become
-        # a selectable hardware session if a validation run is interrupted.
-        internal = originator == "nyx" or (
-            isinstance(source, dict) and source.get("subagent") is not None
-        )
+        internal = isinstance(source, dict) and source.get("subagent") is not None
         return SessionInfo(surface=surface, internal=internal)
     except (OSError, UnicodeDecodeError, ValueError):
         return SessionInfo()

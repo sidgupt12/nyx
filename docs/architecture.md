@@ -131,8 +131,10 @@ effort; it ignores prompts, responses, and tool contents. Files outside
 `~/.codex/sessions` and malformed or oversized records are ignored. Shared-daemon
 terminal sessions use the live remote TUI's TTY as their liveness identity; the
 daemon PID and its 30-minute loaded-thread grace period are not treated as an open
-terminal tab. Explicit Codex subagents and sessions created by Nyx's integration
-validator are hidden from the device. Ambiguous client-to-session matches fail open. Terminal
+terminal tab. Current shared-daemon TUI rollouts can carry a `nyx` origin after
+the follower attaches, so that label is treated as terminal rather than internal.
+Explicit Codex subagents remain hidden from the device. Ambiguous client-to-session
+matches fail open. Terminal
 status remains hook-owned, so transcript fallback cannot incorrectly mark a live
 terminal task idle.
 

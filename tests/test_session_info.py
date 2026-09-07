@@ -79,9 +79,11 @@ class SessionInfoTests(unittest.TestCase):
         self.write(header)
         self.assertFalse(is_internal_session(self.payload, sessions_dir=self.root))
 
-    def test_nyx_validation_session_is_internal(self):
+    def test_shared_daemon_nyx_origin_is_a_real_terminal(self):
         self.write(self.header("nyx"))
-        self.assertTrue(is_internal_session(self.payload, sessions_dir=self.root))
+        info = inspect_origin(self.payload, sessions_dir=self.root)
+        self.assertEqual(info.surface, "TERM")
+        self.assertFalse(info.internal)
 
     def test_outside_path_and_mismatched_header_are_rejected(self):
         outside = self.root.parent / f"outside-{self.SESSION}.jsonl"
@@ -213,10 +215,15 @@ class SessionInfoTests(unittest.TestCase):
     def test_remote_terminal_scanner_reads_tty_and_explicit_session(self, run):
         run.return_value.stdout = (
             f"ttys003 /opt/bin/codex codex resume --remote unix:// {self.SESSION}\n"
-            "?? /opt/bin/codex codex --remote unix://\n"
+            "ttys005 /opt/bin/codex codex\n"
+            "ttys006 /opt/bin/codex codex exec echo-test\n"
+            "?? /opt/bin/codex codex\n"
             "ttys004 /bin/zsh zsh --remote unix://\n"
         )
-        self.assertEqual(remote_terminal_clients(), {"/dev/ttys003": {self.SESSION}})
+        self.assertEqual(
+            remote_terminal_clients(),
+            {"/dev/ttys003": {self.SESSION}, "/dev/ttys005": set()},
+        )
 
     @patch("nyx.session_info.subprocess.run", side_effect=OSError)
     def test_remote_terminal_scan_failure_is_unknown_not_empty(self, _run):
