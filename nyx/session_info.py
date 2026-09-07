@@ -195,7 +195,12 @@ def _origin_info(path, session_id):
         elif originator == "codex-tui":
             surface = "TERM"
         source = data.get("source")
-        internal = isinstance(source, dict) and source.get("subagent") is not None
+        # Nyx never creates user tasks in normal operation. The `nyx` origin is
+        # reserved for its native integration validator, so it must not become
+        # a selectable hardware session if a validation run is interrupted.
+        internal = originator == "nyx" or (
+            isinstance(source, dict) and source.get("subagent") is not None
+        )
         return SessionInfo(surface=surface, internal=internal)
     except (OSError, UnicodeDecodeError, ValueError):
         return SessionInfo()

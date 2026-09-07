@@ -79,6 +79,10 @@ class SessionInfoTests(unittest.TestCase):
         self.write(header)
         self.assertFalse(is_internal_session(self.payload, sessions_dir=self.root))
 
+    def test_nyx_validation_session_is_internal(self):
+        self.write(self.header("nyx"))
+        self.assertTrue(is_internal_session(self.payload, sessions_dir=self.root))
+
     def test_outside_path_and_mismatched_header_are_rejected(self):
         outside = self.root.parent / f"outside-{self.SESSION}.jsonl"
         outside.write_text(json.dumps(self.header()) + "\n")
