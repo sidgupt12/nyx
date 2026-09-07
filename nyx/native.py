@@ -5,6 +5,7 @@ offers. Buttons are never replayed after reconnecting.
 """
 
 from dataclasses import dataclass
+import copy
 import queue
 import threading
 import uuid
@@ -13,6 +14,7 @@ import uuid
 METHODS = {
     "item/commandExecution/requestApproval": "thread-follower-command-approval-decision",
     "item/fileChange/requestApproval": "thread-follower-file-approval-decision",
+    "item/permissions/requestApproval": "thread-follower-permissions-request-approval-response",
 }
 
 
@@ -28,6 +30,24 @@ def decision_for(request, decision):
     if decision == "decline" and "cancel" in choices:
         return "cancel"
     return None
+
+
+def response_for(request, action):
+    """Build the smallest valid response for the exact native request."""
+    method = request.get("method")
+    if method == "item/permissions/requestApproval":
+        requested = request.get("params", {}).get("permissions")
+        if not isinstance(requested, dict):
+            return None
+        # Grant only the permissions Codex put in this request, and only for
+        # this turn. An empty subset is an explicit refusal.
+        return {
+            "permissions": copy.deepcopy(requested) if action == "approve" else {},
+            "scope": "turn",
+        }
+    decision = "accept" if action == "approve" else "decline"
+    decision = decision_for(request, decision)
+    return {"decision": decision} if decision is not None else None
 
 
 @dataclass
@@ -98,9 +118,7 @@ class NativeApprovals:
             if offer is None or action not in {"approve", "reject"}:
                 return False
             try:
-                offer.source.actions.put_nowait(
-                    (offer, "accept" if action == "approve" else "decline")
-                )
+                offer.source.actions.put_nowait((offer, action))
             except queue.Full:
                 return False
             self.offers.pop(token)

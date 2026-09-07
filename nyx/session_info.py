@@ -64,6 +64,7 @@ class SessionInfo:
     model: str = ""
     effort: str = ""
     approvals_reviewer: str = ""
+    internal: bool = False
 
 
 def funky_name(session_id):
@@ -132,6 +133,7 @@ def inspect_rollout(payload, *, sessions_dir=None):
         return SessionInfo()
     session_id = payload.get("session_id")
     surface = status = model = effort = approvals_reviewer = ""
+    internal = False
     try:
         size = path.stat().st_size
         with path.open("rb") as handle:
@@ -148,6 +150,8 @@ def inspect_rollout(payload, *, sessions_dir=None):
                         and data.get("id") == session_id
                     ):
                         originator = data.get("originator")
+                        source = data.get("source")
+                        internal = isinstance(source, dict) and source.get("subagent") is not None
                         if originator in {"codex_work_desktop", "Codex Desktop"}:
                             surface = "APP"
                         elif originator == "codex-tui":
@@ -189,7 +193,12 @@ def inspect_rollout(payload, *, sessions_dir=None):
                         status = "IDLE"
     except OSError:
         return SessionInfo()
-    return SessionInfo(surface, status, model, effort, approvals_reviewer)
+    return SessionInfo(surface, status, model, effort, approvals_reviewer, internal)
+
+
+def is_internal_session(payload, *, sessions_dir=None):
+    """Return true only for an explicitly marked Codex subagent rollout."""
+    return inspect_rollout(payload, sessions_dir=sessions_dir).internal
 
 
 def inspect_updates(path, offset):
@@ -311,6 +320,10 @@ class SessionObserver:
             else:
                 info, position = inspect_updates(path, self.positions[session_id])
                 self.positions[session_id] = position
+            if info.internal:
+                self.controller.remove_session(session_id)
+                active.discard(session_id)
+                continue
             # Transcript lifecycle is a fallback only for desktop, where
             # Stop is not delivered consistently by current app builds.
             known_surface = info.surface

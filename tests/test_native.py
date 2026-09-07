@@ -14,6 +14,7 @@ from nyx.opener import open_session, remote_terminal_tty
 
 
 COMMAND = "item/commandExecution/requestApproval"
+PERMISSIONS = "item/permissions/requestApproval"
 
 
 def request(number=1, sid="session-a"):
@@ -164,6 +165,54 @@ class NativeTests(unittest.TestCase):
             }
         )
         self.assertFalse(self.hub.submit(token, "approve"))
+
+    def test_desktop_permission_request_grants_only_requested_turn_permissions(self):
+        permission = {
+            "id": "permission-1",
+            "method": PERMISSIONS,
+            "params": {
+                "threadId": "session-a",
+                "reason": "Write generated output",
+                "permissions": {
+                    "fileSystem": {
+                        "entries": [
+                            {"access": "write", "path": {"type": "path", "path": "/tmp/out"}}
+                        ]
+                    }
+                },
+            },
+        }
+        self.snapshot([permission])
+        token = self.core.snapshot()["view_id"]
+        self.assertTrue(self.hub.submit(token, "approve"))
+        self.desktop.decisions()
+        sent = self.sent[-1]
+        self.assertEqual(sent["method"], "thread-follower-permissions-request-approval-response")
+        self.assertEqual(
+            sent["params"]["response"],
+            {"permissions": permission["params"]["permissions"], "scope": "turn"},
+        )
+
+    def test_terminal_permission_reject_grants_nothing(self):
+        terminal = AppServer(self.hub)
+        terminal.joined.add("session-a")
+        terminal.send = self.sent.append
+        permission = {
+            "id": 91,
+            "method": PERMISSIONS,
+            "params": {
+                "threadId": "session-a",
+                "permissions": {"network": {"enabled": True}},
+            },
+        }
+        terminal.message(permission)
+        token = self.core.snapshot()["view_id"]
+        self.assertTrue(self.hub.submit(token, "reject"))
+        terminal.decisions()
+        self.assertEqual(
+            self.sent[-1],
+            {"id": 91, "result": {"permissions": {}, "scope": "turn"}},
+        )
 
     def test_terminal_does_not_load_standalone_sessions(self):
         terminal = AppServer(self.hub)

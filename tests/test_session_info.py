@@ -9,6 +9,7 @@ from nyx.session_info import (
     funky_name,
     inspect_rollout,
     inspect_updates,
+    is_internal_session,
     process_alive,
     rollout_path,
     terminal_surface,
@@ -64,6 +65,16 @@ class SessionInfoTests(unittest.TestCase):
     def test_cli_surface_is_terminal_but_status_remains_observer_optional(self):
         self.write(self.header("codex-tui"))
         self.assertEqual(inspect_rollout(self.payload, sessions_dir=self.root).surface, "TERM")
+
+    def test_guardian_subagent_is_explicitly_internal(self):
+        header = self.header()
+        header["payload"]["source"] = {"subagent": {"other": "guardian"}}
+        self.write(header)
+        self.assertTrue(is_internal_session(self.payload, sessions_dir=self.root))
+
+        header["payload"]["source"] = "vscode"
+        self.write(header)
+        self.assertFalse(is_internal_session(self.payload, sessions_dir=self.root))
 
     def test_outside_path_and_mismatched_header_are_rejected(self):
         outside = self.root.parent / f"outside-{self.SESSION}.jsonl"

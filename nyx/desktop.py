@@ -15,7 +15,7 @@ import struct
 import time
 import uuid
 
-from .native import METHODS, Source, decision_for
+from .native import METHODS, Source, response_for
 from .protocol import runtime_dir
 
 LOG = logging.getLogger(__name__)
@@ -204,7 +204,7 @@ class Desktop(Source):
     def decisions(self):
         while True:
             try:
-                offer, decision = self.actions.get_nowait()
+                offer, action = self.actions.get_nowait()
             except queue.Empty:
                 return
             requests = self.states.get(offer.session_id, {}).get("requests", [])
@@ -218,9 +218,14 @@ class Desktop(Source):
             )
             if request is None:
                 continue
-            decision = decision_for(request, decision)
-            if decision is None:
+            response = response_for(request, action)
+            if response is None:
                 continue
+            answer = (
+                {"response": response}
+                if offer.method == "item/permissions/requestApproval"
+                else response
+            )
             self.send(
                 {
                     "type": "request",
@@ -233,7 +238,7 @@ class Desktop(Source):
                     "params": {
                         "conversationId": offer.session_id,
                         "requestId": offer.request_id,
-                        "decision": decision,
+                        **answer,
                     },
                 }
             )

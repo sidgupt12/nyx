@@ -14,7 +14,7 @@ import time
 from websockets.sync.client import unix_connect
 from websockets.exceptions import WebSocketException
 
-from .native import METHODS, Source, decision_for
+from .native import METHODS, Source, response_for
 from .protocol import runtime_dir
 
 LOG = logging.getLogger(__name__)
@@ -150,16 +150,16 @@ class AppServer(Source):
     def decisions(self):
         while True:
             try:
-                offer, decision = self.actions.get_nowait()
+                offer, action = self.actions.get_nowait()
             except queue.Empty:
                 return
             requests = self.requests.get(offer.session_id, {})
             request = requests.get(offer.request_id)
             if request is None or request.get("method") != offer.method:
                 continue
-            decision = decision_for(request, decision)
-            if decision is None:
+            response = response_for(request, action)
+            if response is None:
                 continue
-            self.send({"id": offer.request_id, "result": {"decision": decision}})
+            self.send({"id": offer.request_id, "result": response})
             requests.pop(offer.request_id, None)
             self.hub.update(self, offer.session_id, list(requests.values()))

@@ -85,8 +85,10 @@ the current hook contract cannot enforce that distinction for you.
 Native decisions go directly to the existing request. A USB result of "queued"
 means Nyx accepted the button; native resolution remains authoritative. Duplicate
 button presses cannot re-arm an in-flight decision. For prompts offering Cancel
-instead of Decline, the reject button cancels the turn. Broad session grants,
-permission-subset forms, and question forms remain in the native UI.
+instead of Decline, the reject button cancels the turn. For structured permission
+requests, approve returns exactly the requested permission subset with turn scope;
+reject returns an empty subset. Broad session grants and question forms remain in
+the native UI.
 
 In legacy manual mode only, hook output supplies the decision and native UI
 does not appear until that synchronous hook returns. Do not enable that mode

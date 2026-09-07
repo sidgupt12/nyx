@@ -24,6 +24,14 @@ class HookTests(unittest.TestCase):
             self.assertEqual(run_hook(io.StringIO(text), output), 0)
             self.assertEqual(output.getvalue(), "")
 
+    @patch("nyx.hooks.is_internal_session", return_value=True)
+    @patch("nyx.hooks.socket.socket")
+    def test_internal_subagent_never_reaches_bridge(self, socket, internal):
+        output = io.StringIO()
+        self.assertEqual(run_hook(io.StringIO(json.dumps(event())), output), 0)
+        socket.assert_not_called()
+        self.assertEqual(output.getvalue(), "")
+
     @patch("nyx.hooks.codex_process", return_value=(2468, "/dev/ttys003"))
     @patch("nyx.hooks.socket.socket")
     @patch("nyx.hooks.receive", return_value={"wait": False})

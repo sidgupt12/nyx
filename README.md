@@ -11,7 +11,8 @@ web dashboard, network port, Wi-Fi, or new Codex session.
 - Opens a known origin when the encoder is pressed (window-routing limits below).
 - Reconnects after USB loss; clears old permission decisions on disconnect/reboot.
 - Removes a stale session shortly after its originating Codex process exits.
-- Answers native command/file approvals from the hardware or the normal Codex UI.
+- Answers native command, file, and structured permission approvals from the
+  hardware or the normal Codex UI.
 
 **Native approvals are now the default.** Hooks return immediately; the bridge
 follows the actual pending requests exposed by the desktop app or a shared
@@ -163,7 +164,9 @@ When connected, the OLED displays the native request. Press YES to allow once,
 or press NO to decline. If Codex offers Cancel instead of Decline,
 NO cancels the turn, matching its native refusal choice. You can also use the
 normal on-screen buttons. There is no Nyx countdown for native requests.
-Broader session grants and input forms must be answered in Codex.
+For a structured permission request, YES grants exactly the permissions shown by
+Codex for the current turn; NO grants none. Broader session grants and input
+forms must be answered in Codex.
 
 ## Legacy hook-only approval test
 

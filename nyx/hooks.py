@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 from .protocol import APPROVAL_SECONDS, EVENTS, MAX_HOOK, encode, receive, socket_path
-from .session_info import inspect_rollout
+from .session_info import inspect_rollout, is_internal_session
 
 
 def origin():
@@ -63,6 +63,10 @@ def run_hook(stdin=None, stdout=None, path=None):
             return 0
         payload = json.loads(raw)
         if not isinstance(payload, dict) or payload.get("hook_event_name") not in EVENTS:
+            return 0
+        # Guardian/reviewer subagents are implementation details, not chats the
+        # user can select or open. Their rollout explicitly identifies them.
+        if is_internal_session(payload):
             return 0
         payload["_nyx"] = origin()
         # Permission hooks do not document who will review the request. Current

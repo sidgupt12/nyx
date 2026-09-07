@@ -138,8 +138,8 @@ class Controller:
             elif kind == 'active':
                 session['status'] = 'RUNNING'
             session['detail'] = ''
-            # Other native inputs remain visible with Open, but cannot be
-            # answered with a binary button (forms, permission subsets, etc.).
+            # Non-binary inputs remain visible with Open, but only approval
+            # requests become actionable with the YES/NO hardware buttons.
             human_methods = {
                 'item/commandExecution/requestApproval', 'item/fileChange/requestApproval',
                 'item/permissions/requestApproval', 'item/tool/requestUserInput',
