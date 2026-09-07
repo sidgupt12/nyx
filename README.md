@@ -4,6 +4,10 @@ A local, headless bridge between **existing Codex sessions** and an ESP32 desk c
 Python on your Mac; a small Arduino/C++ program on the board. No notification app,
 web dashboard, network port, Wi-Fi, or new Codex session.
 
+**Phase 1 is complete.** The hardware-tested milestone is preserved as Git tag
+`v0.1.0-phase1`. See the [Phase 1 checkpoint](docs/phase-1-checkpoint.md) before
+changing session detection, approvals, USB behavior, or window routing.
+
 ## What this version does
 
 - Shows hook-observed IDLE/RUNNING state on a 1.3-inch SH1106 OLED.
@@ -157,8 +161,9 @@ codex resume --remote unix:// YOUR_SESSION_ID
 Do not run the same saved session simultaneously in its old standalone process
 and the shared server. Already-running standalone CLIs cannot be attached by this
 adapter. Shared-server sessions may continue when their terminal UI closes.
-Hooks running in a shared daemon may lack the individual terminal's TTY; exact
-Open routing for these sessions is not yet guaranteed.
+Hooks running in a shared daemon may lack the individual terminal's TTY. Nyx
+correlates a uniquely identifiable live Codex TUI with its TTY, allowing the
+encoder to open that exact Terminal tab. Ambiguous matches deliberately open nothing.
 
 When connected, the OLED displays the native request. Press YES to allow once,
 or press NO to decline. If Codex offers Cancel instead of Decline,
