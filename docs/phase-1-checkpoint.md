@@ -2,9 +2,9 @@
 
 **Saved:** September 7, 2026
 **Git tag:** `v0.2.0-phase1`
-**Milestone:** the first working Nyx hardware controller
+**Milestone:** the first working Nyx physical control deck
 
-This is the known-good foundation for the Codex Micro project. It is deliberately
+This is the known-good foundation for the Nyx project. It is deliberately
 small: Nyx observes existing Codex sessions, shows them on the physical controller,
 and adds physical controls without replacing or blocking the normal Codex UI.
 

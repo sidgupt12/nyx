@@ -1,13 +1,14 @@
 # Nyx
 
-**An open-source, DIY alternative to Codex Micro.**
+**An open-source physical control deck for Codex.**
 
-Nyx turns a small ESP32 into a physical desk controller for Codex. It watches the
+Nyx turns a small ESP32 into a purpose-built desk controller for Codex. It watches the
 Codex sessions already running on your Mac and lets you see their state, move between
 them, open the correct window, and respond to real approval requests from hardware.
 
 Nyx does not start agents, send prompts, or replace the normal Codex interface. It is
-a local add-on: Codex continues to work normally when Nyx is stopped or unplugged.
+a local add-on: Codex continues to work normally when Nyx is stopped or unplugged. Its
+controls perform specific Codex actions; Phase 1 is not a programmable macropad.
 
 ## Phase 1: working
 
