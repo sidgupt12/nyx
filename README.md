@@ -1,261 +1,198 @@
-# nyx
+# Nyx
 
-A local, headless bridge between **existing Codex sessions** and an ESP32 desk controller.
-Python on your Mac; a small Arduino/C++ program on the board. No notification app,
-web dashboard, network port, Wi-Fi, or new Codex session.
+**An open-source, DIY alternative to Codex Micro.**
 
-**Phase 1 is complete.** The hardware-tested milestone is preserved as Git tag
-`v0.1.0-phase1`. See the [Phase 1 checkpoint](docs/phase-1-checkpoint.md) before
-changing session detection, approvals, USB behavior, or window routing.
+Nyx turns a small ESP32 into a physical desk controller for Codex. It watches the
+Codex sessions already running on your Mac and lets you see their state, move between
+them, open the correct window, and respond to real approval requests from hardware.
 
-## What this version does
+Nyx does not start agents, send prompts, or replace the normal Codex interface. It is
+a local add-on: Codex continues to work normally when Nyx is stopped or unplugged.
 
-- Shows hook-observed IDLE/RUNNING state on a 1.3-inch SH1106 OLED.
-- Lets the encoder select between sessions and pending requests.
-- Opens a known origin when the encoder is pressed (window-routing limits below).
-- Reconnects after USB loss; clears old permission decisions on disconnect/reboot.
-- Removes a stale session shortly after its originating Codex process exits.
-- Answers native command, file, and structured permission approvals from the
-  hardware or the normal Codex UI.
+## Phase 1: working
 
-**Native approvals are now the default.** Hooks return immediately; the bridge
-follows the actual pending requests exposed by the desktop app or a shared
-terminal server. An automatic approval needs no button press. If a request reaches
-the human UI, Nyx can answer that same request. Answering in Codex clears Nyx's button.
-The desktop adapter uses a private, version-dependent local interface.
-Standalone terminal sessions must be reconnected as described below.
+- Shows multiple Codex desktop and terminal sessions on a 1.3-inch OLED.
+- Displays a friendly session name, App/Terminal source, state, model, and effort.
+- Shows `IDLE`, `RUNNING`, and genuine `PERMISSION REQUIRED` states.
+- Rotates through sessions with an encoder.
+- Opens the exact Codex desktop task or matched Apple Terminal tab on encoder press.
+- Approves or rejects a live request with physical buttons.
+- Keeps the normal Codex approval controls working at the same time.
+- Ignores work that Codex approves automatically instead of creating false requests.
+- Removes closed terminal sessions and reconnects after USB interruptions.
 
-## Find your way around
+The tested Phase 1 build is preserved in Git as `v0.2.0-phase1`. Its behavior and
+regression checklist are documented in [the Phase 1 checkpoint](docs/phase-1-checkpoint.md).
+
+## Parts used so far
+
+| Quantity | Part |
+| ---: | --- |
+| 1 | ESP32-S3-N16R8 development board (DevKit style) |
+| 1 | 1.3-inch SH1106 128×64 blue I2C OLED, 4 pin |
+| 1 | KY-040-style rotary encoder module with push switch |
+| 2 | Tactile push buttons: approve and reject |
+| 1 | Full-size solderless breadboard |
+| — | Male-to-male jumper wires |
+| 1 | USB data cable for the board's USB/UART connector |
+| 1 | Mac running Codex |
+
+No external button resistors are needed because the firmware uses the ESP32's internal
+pull-ups. LEDs, a speaker, joystick, mechanical switches, microphone, and enclosure are
+not part of this build yet.
+
+## Wiring
+
+Disconnect USB before changing wires. Use 3.3 V and a shared ground.
+
+| Part | ESP32-S3 pin |
+| --- | --- |
+| OLED VCC | 3V3 |
+| OLED GND | GND |
+| OLED SDA | GPIO 8 |
+| OLED SCK/SCL | GPIO 9 |
+| Approve button | GPIO 5 ↔ button ↔ GND |
+| Reject button | GPIO 12 ↔ button ↔ GND |
+| Encoder CLK | GPIO 6 |
+| Encoder DT | GPIO 7 |
+| Encoder SW | GPIO 10 |
+| Encoder GND | GND |
+| Encoder + | 3V3 |
+
+The complete beginner-friendly guide is in [docs/wiring.md](docs/wiring.md).
+
+## How it works
 
 ```text
-nyx/                    Python code running on the Mac
-  controller.py         states, session selection, one-shot decisions
-  native.py             live request IDs and one-shot hardware actions
-  desktop.py            desktop app's local follower connection
-  appserver.py          shared terminal server connection
-  session_info.py       friendly names + bounded desktop metadata reader
-  listener.py           local hook connections
-  hardware.py           USB connection and reconnect
-  hooks.py              short-lived Codex hook client
-  hook.py               file entry point Codex runs from any directory
-  opener.py             best-effort focus of the originating app
-  installer.py          reversible hook configuration
-  protocol.py           JSON format constants and framing
-  __main__.py           the command-line controls
-firmware/
-  include/pins.h        all wiring choices in one place
-  src/main.cpp          display, encoder, buttons, USB
-  platformio.ini        board and pinned library versions
-tests/                  automated tests; no physical board needed
-docs/                   wiring, architecture, and USB protocol
+Existing Codex sessions
+        │
+        ├── trusted hooks: state and session identity
+        ├── desktop adapter: live desktop requests
+        └── terminal adapter: live terminal requests
+                         │
+                         ▼
+                  Python bridge on Mac
+                         │
+                    USB JSON messages
+                         │
+                         ▼
+              ESP32 firmware + OLED + controls
 ```
 
-Start reading with `nyx/controller.py` and `firmware/include/pins.h`.
-You do not need to understand networking or JavaScript.
+The Mac bridge and ESP32 firmware are deliberately separate. The board only understands
+small state and action messages; it contains no Codex credentials or session logic. This
+makes it straightforward to add new controls later without rebuilding the integration.
 
-## 1. Set up the Mac
+### Engineering behind Phase 1
 
-Requires macOS, Python 3.10+, and a Codex client with trusted command hooks.
-The native terminal interface was tested against Codex CLI 0.153.4. Other client versions
-need their own live verification; merely having Codex installed is not enough.
+- **Real requests, not simulation:** Nyx follows the live request IDs used by Codex.
+- **Safe one-shot actions:** every button action belongs to the exact request and session
+  shown on screen. Resolved, duplicated, stale, or disconnected actions are rejected.
+- **Fail-closed behavior:** a timeout, unknown protocol, missing device, or ambiguous
+  session never becomes an approval.
+- **Non-blocking integration:** hooks return immediately in normal mode, so Nyx cannot
+  hold up automatic approval or the normal Codex interface.
+- **Exact window routing:** desktop tasks use their task ID; terminal tasks are matched to
+  a live TTY. Nyx opens nothing when it cannot identify the origin safely.
+- **Lifecycle tracking:** the long-running Codex daemon is kept separate from the terminal
+  window attached to it, so closing a tab removes the correct device entry.
+- **Local transport:** Mac components communicate through local Unix sockets, and the
+  hardware uses USB serial. Nyx opens no TCP port and does not need Wi-Fi.
 
-From the repository folder:
+For the deeper design and safety boundaries, read [docs/architecture.md](docs/architecture.md)
+and [docs/protocol.md](docs/protocol.md).
+
+## Build it
+
+Nyx currently targets macOS, Python 3.10+, an ESP32-S3, and a SH1106 OLED.
 
 ```sh
+git clone https://github.com/sidgupt12/nyx.git
+cd nyx
+
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
-python -m unittest discover -v
+python -m pip install -e '.[dev]'
+python -m pip install platformio==6.1.19
 ```
 
-Runtime dependencies are pinned in `pyproject.toml`: pyserial for USB and
-websockets for the terminal server's local Unix-socket connection.
-Run the activation command again in each new terminal.
-
-## 2. Build the board code
-
-The target matches the existing hardware test project: **ESP32-S3-DevKitC-1**
-and **SH1106 128×64 I2C OLED**, not an ESP32-C3. Confirm your board before flashing.
-Read [wiring and first power-on](docs/wiring.md) first.
-
-With the Python environment active:
+Build and upload the firmware:
 
 ```sh
-python -m pip install platformio==6.1.19
 pio run -d firmware
 nyx ports
-```
-
-A successful build creates firmware locally; it does **not** change the board.
-When you are ready, replace the example port with your actual board's port:
-
-```sh
 pio run -d firmware -t upload --upload-port /dev/cu.usbmodemYOUR_BOARD
 ```
 
-Use the exact port printed by `nyx ports`. The tested dual-USB board uses its
-USB/UART connector for both uploading and Nyx data; macOS describes it as
-`USB Single Serial`.
+Use the exact board port printed by `nyx ports`. Close PlatformIO's Serial Monitor first;
+only one process can use the USB serial connection at a time.
 
-Flashing replaces the previous program on the board. Keep your separate hardware
-Testing project so you can reflash it if needed. Close PlatformIO Serial Monitor
-before running Nyx: only one program should own the serial connection.
-
-## 3. Install hooks and run
+Install the Codex hooks and start the background bridge:
 
 ```sh
 nyx install-hooks
-nyx run --port /dev/cu.usbmodemYOUR_BOARD
-```
-
-The installer preserves other tools' hooks and makes a dated backup of hooks.json
-before each actual change. Restart existing Codex sessions and review/trust Nyx's
-changed hooks using the client's hook controls (`/hooks` in the CLI).
-Start a new turn; Nyx cannot reconstruct events that happened before it started.
-
-Expected device sequence: **BRIDGE OFFLINE → WAITING FOR CODEX → RUNNING → IDLE**.
-There are no test notifications. The old notification implementation is removed.
-
-When the foreground test works, stop it with Ctrl+C and use:
-
-```sh
 nyx start --port /dev/cu.usbmodemYOUR_BOARD
 nyx status
-nyx stop
 ```
 
-`start` detaches a Python process and checks startup; it does not use nohup.
-It runs until stopped, logout/reboot, or failure. **Autostart at login is not installed.**
-After reboot, run `nyx start ...` again. Logs live in `~/.codex/nyx/bridge.log`.
-The USB worker reconnects every second when disconnected. No claims of measured battery use.
+Restart or send a new message in each Codex session after installing the hooks. New state
+cannot be reconstructed until a trusted hook from that session reaches Nyx.
 
-## 4. Connect native approvals
-
-Desktop: run Nyx normally, then send a message in the desktop task. Trusted hooks
-identify the task; Nyx follows its live state. `nyx status` prints
-`Native desktop: connected` after the app's socket handshake succeeds.
-
-Terminal: Codex and Nyx must share the same running backend. Start Codex's official
-local daemon once, then launch the usual terminal UI connected to it:
+For managed terminal sessions with native approval controls, use Codex's shared local
+server:
 
 ```sh
 codex app-server daemon start
 codex --remote unix://
 ```
 
-The daemon command requires Codex's managed standalone installation. A Homebrew
-CLI alone may report `managed standalone Codex install not found`. In that case,
-complete the official Codex standalone setup before using the daemon; Nyx does
-not install or replace Codex automatically. Desktop observation does not require
-this terminal daemon.
+Start Nyx again after a Mac reboot. Stop it at any time with `nyx stop`.
 
-Use that second command in each terminal (including VS Code's terminal). Nyx does
-not launch the terminal UI. The socket is local to your account; no TCP port opens.
-For an existing standalone session, finish/interrupt its current operation, exit
-that CLI, and resume its exact session ID:
+## Controls
 
-```sh
-codex resume --remote unix:// YOUR_SESSION_ID
+| Control | Action |
+| --- | --- |
+| Rotate encoder | Select a session or pending request |
+| Press encoder | Open that session's window |
+| Approve button | Allow the displayed live request once |
+| Reject button | Decline or cancel the displayed live request |
+
+## Project layout
+
+```text
+nyx/       Python bridge, Codex adapters, state, safety, and window routing
+firmware/  ESP32 Arduino/PlatformIO firmware
+docs/      wiring, protocol, architecture, and stable checkpoint notes
+tests/     bridge and safety tests that run without physical hardware
 ```
 
-Do not run the same saved session simultaneously in its old standalone process
-and the shared server. Already-running standalone CLIs cannot be attached by this
-adapter. Shared-server sessions may continue when their terminal UI closes.
-Hooks running in a shared daemon may lack the individual terminal's TTY. Nyx
-correlates a uniquely identifiable live Codex TUI with its TTY, allowing the
-encoder to open that exact Terminal tab. Ambiguous matches deliberately open nothing.
+Start with `nyx/controller.py`, `firmware/src/main.cpp`, and `firmware/include/pins.h`.
 
-When connected, the OLED displays the native request. Press YES to allow once,
-or press NO to decline. If Codex offers Cancel instead of Decline,
-NO cancels the turn, matching its native refusal choice. You can also use the
-normal on-screen buttons. There is no Nyx countdown for native requests.
-For a structured permission request, YES grants exactly the permissions shown by
-Codex for the current turn; NO grants none. Broader session grants and input
-forms must be answered in Codex.
-
-## Legacy hook-only approval test
-
-Use a Codex session configured for **manual/user review**, not "Approve for me".
-First stop the passive bridge, then:
+## Verify changes
 
 ```sh
-nyx run --port /dev/cu.usbmodemYOUR_BOARD --manual-approvals
-```
-
-When a real PermissionRequest hook fires with the device connected:
-
-1. The OLED shows a stable funky session name, App/Terminal icon, live state,
-   model, effort, request preview, and remaining time.
-2. Press the approve button to allow that request once; or press reject.
-3. Encoder press requests Open. Inspect the full operation in Codex when the tiny
-   preview is insufficient. Never approve an operation you do not understand.
-4. If nobody answers within 20 seconds, Nyx makes **no decision** and Codex proceeds
-   with its normal approval flow. The hardware button is then invalid.
-
-The normal Codex prompt can be delayed during this optional hook window.
-This is **not** simultaneous control of an already-visible approval dialog.
-No missing device, expired request, or error ever means "approve".
-
-## Known limits
-
-- Desktop live state protocol version 11 was inspected and tested on this Mac.
-  App updates may require updating this adapter; unknown protocol versions disable
-  native buttons. It is not a documented third-party API.
-- Shared terminal approvals were verified against Codex CLI 0.153.4 using a real
-  local server and a local fake model. Standalone CLIs and the VS Code extension's
-  separate backend are not covered by the terminal adapter.
-- A connected transport is not proof that every session is subscribed: sessions
-  still need their trusted hooks to run after Nyx starts.
-- Hooks observe events only after installation/trust. Current desktop builds do not always
-  deliver `Stop`, so Nyx performs one bounded transcript catch-up and then follows only new
-  lifecycle metadata. Terminal status still comes from hooks. Standalone sessions follow
-  their Codex process; shared-daemon terminal sessions follow the attached remote TUI's TTY.
-  Nyx removes the session three seconds after that client disappears, rather than following
-  the long-lived daemon. Ambiguous matches remain visible instead of guessing. This catches
-  an exited terminal process or closed tab without treating inactivity as a finished session.
-- Terminal/iTerm exact tab targeting requires valid origin metadata. VS Code is app-level
-  focus only. Desktop tasks marked `codex_work_desktop` open their exact conversation
-  through the installed app's deep link. Unknown origins do not open a random Terminal.
-  See [architecture](docs/architecture.md) for the version-dependent metadata fallback.
-- Model and effort are display-only. No effort/approval-policy knob changes, 13-key layout,
-  joystick, LEDs, or speaker yet. The encoder currently selects sessions, not reasoning effort.
-- A C3 needs a separate pin/USB configuration; do not flash this S3 firmware to it.
-
-## Test and remove
-
-```sh
-python -m unittest discover -v
-pio run -d firmware
-nyx stop
-nyx uninstall-hooks
-```
-
-Tests use isolated local sockets, hook subprocesses, and a pseudo-terminal for the
-real pyserial transport. They do not change global Codex config, approve live work,
-or flash hardware. A compiler success is not a physical wiring test.
-
-An opt-in test runs a real temporary Codex server with a local fake model. It
-creates a validation session and archives it afterward. It never calls an OpenAI
-model or sends anything to your board. The approve case executes only
-`printf nyx-native-validation` in a temporary folder:
-
-```sh
-python tests/validate_native_server.py --action reject
-python tests/validate_native_server.py --action approve
-python tests/validate_native_server.py --action native-first
-```
-
-Use `--codex /path/to/codex` if the desktop-bundled binary is elsewhere.
-
-For consistent Python formatting when contributing:
-
-```sh
-python -m pip install -e '.[dev]'
+python -m unittest discover -s tests -q
 ruff check nyx tests
-ruff format nyx tests
+pio run -d firmware
 ```
 
-Uninstall removes only this checkout's Nyx hook commands. Review/restart Codex
-again after configuration changes. Source code, wiring notes, and dependency
-manifests belong in Git; environments, binaries, logs, local instructions, and
-secrets do not.
+Phase 1 has 95 passing Python tests and a successful ESP32-S3 firmware build. Hardware
+changes still require the short live checklist in [docs/wiring.md](docs/wiring.md).
+
+## Current limits
+
+- The desktop integration uses a private local Codex interface that may change after an
+  app update.
+- Native terminal approvals require Codex's managed shared app server; an already-running
+  standalone CLI cannot be attached retroactively.
+- Apple Terminal tabs and Codex desktop tasks can open exactly. VS Code routing is currently
+  app-level rather than exact integrated-terminal selection.
+- Model and effort are display-only. The encoder does not change them yet.
+- The current pin map and firmware target the ESP32-S3, not the ESP32-C3 Super Mini.
+- Nyx does not install login autostart yet.
+
+Nyx is an independent community project and is not affiliated with or endorsed by OpenAI.
+
+## License
+
+[MIT](LICENSE)

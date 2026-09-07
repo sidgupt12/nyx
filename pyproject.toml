@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nyx-controller"
 version = "0.2.0"
-description = "A small, local Codex to ESP32 bridge"
+description = "An open-source physical controller for existing Codex sessions"
 requires-python = ">=3.10"
 dependencies = ["pyserial==3.5", "websockets==15.0.1"]
 

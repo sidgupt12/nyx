@@ -101,9 +101,11 @@ missing hook, or untrusted hook can leave them stale. Sessions before bridge
 startup are not reconstructed. Graceful SessionEnd removes the session.
 
 Origin metadata is best effort; a shared daemon does not identify each terminal UI.
-Nyx refuses to use the daemon's inherited TTY as an Open target. For a unique
-`codex resume --remote unix:// SESSION_ID` process it can match that CLI's TTY
-in Apple Terminal. Other shared-server Open targets remain unsupported.
+Nyx refuses to use the daemon's inherited TTY as an Open target. Its lifecycle
+observer correlates a uniquely identifiable live Codex TUI—including the current
+bare `codex` managed-client command—with a TTY and records that exact match for
+Apple Terminal routing. An explicit `resume SESSION_ID` match takes priority;
+ambiguous mappings open nothing.
 Terminal and iTerm routing matches the recorded TTY/session ID and does not type.
 VS Code focus is app-level, not exact terminal selection. Unidentified origins
 do nothing; lack of a TTY is not treated as proof of a Codex desktop chat.

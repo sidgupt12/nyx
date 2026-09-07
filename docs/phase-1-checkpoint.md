@@ -1,7 +1,7 @@
 # Phase 1 checkpoint
 
-**Saved:** September 7, 2026  
-**Git tag:** `v0.1.0-phase1`  
+**Saved:** September 7, 2026
+**Git tag:** `v0.2.0-phase1`
 **Milestone:** the first working Nyx hardware controller
 
 This is the known-good foundation for the Codex Micro project. It is deliberately
@@ -67,7 +67,7 @@ First commit or stash any work you want to keep. Then create a recovery branch f
 checkpoint rather than deleting current work:
 
 ```sh
-git switch -c recover-phase-1 v0.1.0-phase1
+git switch -c recover-phase-1 v0.2.0-phase1
 ```
 
 The tag preserves the complete source, firmware, tests, and documentation used by this
