@@ -10,8 +10,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
 import threading
 import time
+from uuid import UUID
 
 from .protocol import runtime_dir
 
@@ -102,6 +105,49 @@ def process_alive(pid):
     return True
 
 
+def remote_terminal_clients():
+    """Return live remote Codex TUIs by TTY and any explicit resumed session ID.
+
+    The shared app-server outlives its terminal clients. A TTY is therefore the
+    useful liveness identity; the daemon PID is not. Unknown process formats
+    fail open by returning no inferred identity rather than guessing a window.
+    """
+    try:
+        output = subprocess.run(
+            ["ps", "-axo", "tty=,comm=,args="],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=1,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    clients = {}
+    for line in output.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3 or not parts[0].startswith("ttys"):
+            continue
+        if Path(parts[1]).name.lower() != "codex":
+            continue
+        try:
+            args = shlex.split(parts[2])
+            remote = args.index("--remote") + 1
+        except (ValueError, IndexError):
+            continue
+        if remote >= len(args) or not args[remote].startswith("unix://"):
+            continue
+        session_ids = set()
+        if "resume" in args:
+            for value in args[args.index("resume") + 1 :]:
+                try:
+                    if str(UUID(value)) == value:
+                        session_ids.add(value)
+                except (ValueError, AttributeError):
+                    continue
+        clients.setdefault("/dev/" + parts[0], set()).update(session_ids)
+    return clients
+
+
 def rollout_path(payload, *, sessions_dir=None):
     """Resolve only this session's file inside the local sessions directory."""
     session_id = payload.get("session_id")
@@ -126,38 +172,55 @@ def rollout_path(payload, *, sessions_dir=None):
     return None
 
 
+def _origin_info(path, session_id):
+    """Read only the bounded session header needed for origin classification."""
+    try:
+        with path.open("rb") as handle:
+            header = handle.readline(LINE_BYTES + 1)
+        if len(header) > LINE_BYTES:
+            return SessionInfo()
+        record = json.loads(header)
+        data = record.get("payload", {}) if isinstance(record, dict) else {}
+        if (
+            not isinstance(record, dict)
+            or record.get("type") != "session_meta"
+            or not isinstance(data, dict)
+            or data.get("id") != session_id
+        ):
+            return SessionInfo()
+        originator = data.get("originator")
+        surface = ""
+        if originator in {"codex_work_desktop", "Codex Desktop"}:
+            surface = "APP"
+        elif originator == "codex-tui":
+            surface = "TERM"
+        source = data.get("source")
+        internal = isinstance(source, dict) and source.get("subagent") is not None
+        return SessionInfo(surface=surface, internal=internal)
+    except (OSError, UnicodeDecodeError, ValueError):
+        return SessionInfo()
+
+
+def inspect_origin(payload, *, sessions_dir=None):
+    """Return origin metadata without scanning any conversation records."""
+    path = rollout_path(payload, sessions_dir=sessions_dir)
+    if path is None:
+        return SessionInfo()
+    return _origin_info(path, payload.get("session_id"))
+
+
 def inspect_rollout(payload, *, sessions_dir=None):
     """Read a bounded tail and return only lifecycle/display fields."""
     path = rollout_path(payload, sessions_dir=sessions_dir)
     if path is None:
         return SessionInfo()
     session_id = payload.get("session_id")
-    surface = status = model = effort = approvals_reviewer = ""
-    internal = False
+    origin = _origin_info(path, session_id)
+    surface, internal = origin.surface, origin.internal
+    status = model = effort = approvals_reviewer = ""
     try:
         size = path.stat().st_size
         with path.open("rb") as handle:
-            # Origin lives in the first record and may be far outside the tail.
-            header = handle.readline(LINE_BYTES + 1)
-            if len(header) <= LINE_BYTES:
-                try:
-                    record = json.loads(header)
-                    data = record.get("payload", {}) if isinstance(record, dict) else {}
-                    if (
-                        isinstance(record, dict)
-                        and record.get("type") == "session_meta"
-                        and isinstance(data, dict)
-                        and data.get("id") == session_id
-                    ):
-                        originator = data.get("originator")
-                        source = data.get("source")
-                        internal = isinstance(source, dict) and source.get("subagent") is not None
-                        if originator in {"codex_work_desktop", "Codex Desktop"}:
-                            surface = "APP"
-                        elif originator == "codex-tui":
-                            surface = "TERM"
-                except (UnicodeDecodeError, ValueError):
-                    pass
             start = max(0, size - TAIL_BYTES)
             handle.seek(start)
             if start:
@@ -264,12 +327,14 @@ class SessionObserver:
         interval=0.5,
         *,
         pid_is_alive=process_alive,
+        terminal_clients=remote_terminal_clients,
         clock=time.monotonic,
         liveness_grace=LIVENESS_GRACE_SECONDS,
     ):
         self.controller = controller
         self.interval = interval
         self.pid_is_alive = pid_is_alive
+        self.terminal_clients = terminal_clients
         self.clock = clock
         self.liveness_grace = liveness_grace
         self.stopped = threading.Event()
@@ -277,6 +342,7 @@ class SessionObserver:
         self.modified = {}
         self.positions = {}
         self.dead_since = {}
+        self.terminal_ttys = {}
 
     def start(self):
         self.thread = threading.Thread(target=self.run, daemon=True, name="nyx-sessions")
@@ -297,8 +363,18 @@ class SessionObserver:
         payloads = self.controller.session_payloads()
         now = self.clock()
         active = set(payloads)
+        shared = {
+            sid
+            for sid, payload in payloads.items()
+            if isinstance(payload.get("_nyx"), dict)
+            and payload["_nyx"].get("shared_server") is True
+        }
+        try:
+            clients = self.terminal_clients() if shared else None
+        except Exception:
+            clients = None
         for session_id, payload in payloads.items():
-            if self._closed(session_id, payload, now):
+            if self._closed(session_id, payload, now, clients):
                 self.controller.remove_session(session_id)
                 active.discard(session_id)
                 continue
@@ -340,9 +416,38 @@ class SessionObserver:
         self.modified = {key: value for key, value in self.modified.items() if key in active}
         self.positions = {key: value for key, value in self.positions.items() if key in active}
         self.dead_since = {key: value for key, value in self.dead_since.items() if key in active}
+        self.terminal_ttys = {
+            key: value for key, value in self.terminal_ttys.items() if key in active
+        }
 
-    def _closed(self, session_id, payload, now):
+    def _closed(self, session_id, payload, now, clients=None):
         metadata = payload.get("_nyx", {})
+        if isinstance(metadata, dict) and metadata.get("shared_server") is True:
+            if clients is None:
+                # Losing visibility into processes must never hide a session.
+                self.dead_since.pop(session_id, None)
+                return False
+            # An explicit `resume SESSION_ID` mapping wins. For a new remote
+            # TUI, assign only the one unclaimed TTY; ambiguity fails open.
+            exact = [tty for tty, ids in clients.items() if session_id in ids]
+            if len(exact) == 1:
+                self.terminal_ttys[session_id] = exact[0]
+            tty = self.terminal_ttys.get(session_id)
+            if tty in clients:
+                self.dead_since.pop(session_id, None)
+                return False
+            if tty is None:
+                claimed = {value for key, value in self.terminal_ttys.items() if key != session_id}
+                available = set(clients) - claimed
+                if len(available) == 1:
+                    self.terminal_ttys[session_id] = available.pop()
+                    self.dead_since.pop(session_id, None)
+                    return False
+                if clients:
+                    self.dead_since.pop(session_id, None)
+                    return False
+            first_seen = self.dead_since.setdefault(session_id, now)
+            return now - first_seen >= self.liveness_grace
         pid = metadata.get("origin_pid") if isinstance(metadata, dict) else None
         if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 1:
             self.dead_since.pop(session_id, None)

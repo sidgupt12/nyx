@@ -8,9 +8,11 @@ from nyx.session_info import (
     SessionObserver,
     funky_name,
     inspect_rollout,
+    inspect_origin,
     inspect_updates,
     is_internal_session,
     process_alive,
+    remote_terminal_clients,
     rollout_path,
     terminal_surface,
 )
@@ -65,6 +67,7 @@ class SessionInfoTests(unittest.TestCase):
     def test_cli_surface_is_terminal_but_status_remains_observer_optional(self):
         self.write(self.header("codex-tui"))
         self.assertEqual(inspect_rollout(self.payload, sessions_dir=self.root).surface, "TERM")
+        self.assertEqual(inspect_origin(self.payload, sessions_dir=self.root).surface, "TERM")
 
     def test_guardian_subagent_is_explicitly_internal(self):
         header = self.header()
@@ -149,6 +152,71 @@ class SessionInfoTests(unittest.TestCase):
         now[0] += 0.1
         observer.poll_once()
         self.assertEqual(core.snapshot()["count"], 0)
+
+    def test_shared_terminal_is_removed_when_its_tty_closes(self):
+        from nyx.controller import Controller
+
+        now = [100.0]
+        clients = [{"/dev/ttys003": set()}]
+        core = Controller()
+        core.event(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": self.SESSION,
+                "cwd": "/tmp/project",
+                "_nyx": {"origin_pid": 999},
+            },
+            False,
+        )
+        core.native_state(self.SESSION, "terminal", {})
+        observer = SessionObserver(
+            core,
+            pid_is_alive=lambda _pid: True,
+            terminal_clients=lambda: clients[0],
+            clock=lambda: now[0],
+            liveness_grace=3,
+        )
+        observer.poll_once()
+        self.assertEqual(core.snapshot()["count"], 1)
+        clients[0] = {}
+        observer.poll_once()
+        now[0] += 3
+        observer.poll_once()
+        self.assertEqual(core.snapshot()["count"], 0)
+
+    def test_ambiguous_unmapped_terminal_clients_fail_open(self):
+        from nyx.controller import Controller
+
+        core = Controller()
+        core.event(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": self.SESSION,
+                "_nyx": {},
+            },
+            False,
+        )
+        core.native_state(self.SESSION, "terminal", {})
+        observer = SessionObserver(
+            core,
+            terminal_clients=lambda: {"/dev/ttys003": set(), "/dev/ttys004": set()},
+            liveness_grace=0,
+        )
+        observer.poll_once()
+        self.assertEqual(core.snapshot()["count"], 1)
+
+    @patch("nyx.session_info.subprocess.run")
+    def test_remote_terminal_scanner_reads_tty_and_explicit_session(self, run):
+        run.return_value.stdout = (
+            f"ttys003 /opt/bin/codex codex resume --remote unix:// {self.SESSION}\n"
+            "?? /opt/bin/codex codex --remote unix://\n"
+            "ttys004 /bin/zsh zsh --remote unix://\n"
+        )
+        self.assertEqual(remote_terminal_clients(), {"/dev/ttys003": {self.SESSION}})
+
+    @patch("nyx.session_info.subprocess.run", side_effect=OSError)
+    def test_remote_terminal_scan_failure_is_unknown_not_empty(self, _run):
+        self.assertIsNone(remote_terminal_clients())
 
     def test_live_origin_and_unknown_pid_are_never_removed(self):
         from nyx.controller import Controller

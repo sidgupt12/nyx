@@ -16,6 +16,7 @@ from websockets.exceptions import WebSocketException
 
 from .native import METHODS, Source, response_for
 from .protocol import runtime_dir
+from .session_info import inspect_origin
 
 LOG = logging.getLogger(__name__)
 MAX_LINE = 8 * 1024 * 1024
@@ -97,6 +98,8 @@ class AppServer(Source):
             return
         if method == "thread/status/changed":
             params = message["params"]
+            if params["threadId"] not in self.joined:
+                return
             self.hub.controller.native_state(
                 params["threadId"], self.name, {"threadRuntimeStatus": params["status"]}
             )
@@ -128,7 +131,11 @@ class AppServer(Source):
         elif method == "thread/loaded/list":
             # Only rejoin sessions known through hooks AND already in this
             # server. Never load a different copy of a standalone CLI session.
-            known = self.hub.controller.session_payloads()
+            known = {
+                sid: payload
+                for sid, payload in self.hub.controller.session_payloads().items()
+                if inspect_origin(payload).surface == "TERM"
+            }
             for sid in result["data"]:
                 if sid in known and sid not in self.joined:
                     self.joined.add(sid)

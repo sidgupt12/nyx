@@ -221,6 +221,32 @@ class NativeTests(unittest.TestCase):
         terminal.message({"id": 1, "result": {"data": ["some-other-session"]}})
         self.assertEqual(self.sent, [])
 
+    @patch("nyx.appserver.inspect_origin")
+    def test_terminal_joins_only_a_known_terminal_rollout(self, origin):
+        terminal = AppServer(self.hub)
+        terminal.pending[1] = ("thread/loaded/list", None, 0)
+        terminal.send = self.sent.append
+        origin.return_value.surface = "TERM"
+        terminal.message({"id": 1, "result": {"data": ["session-a"]}})
+        self.assertIn("session-a", terminal.joined)
+        self.assertEqual(self.sent[-1]["method"], "thread/resume")
+
+        terminal.joined.clear()
+        terminal.pending[2] = ("thread/loaded/list", None, 0)
+        origin.return_value.surface = "APP"
+        terminal.message({"id": 2, "result": {"data": ["session-a"]}})
+        self.assertNotIn("session-a", terminal.joined)
+
+    def test_terminal_ignores_status_for_a_thread_it_did_not_join(self):
+        terminal = AppServer(self.hub)
+        terminal.message(
+            {
+                "method": "thread/status/changed",
+                "params": {"threadId": "session-a", "status": {"type": "active"}},
+            }
+        )
+        self.assertNotEqual(self.core.session_surface("session-a"), "TERM")
+
     def test_shared_daemon_tty_is_never_used_as_open_target(self):
         self.core.native_state("session-a", "terminal", {})
         self.core.event(event("PostToolUse", _nyx={"tty": "/dev/ttys999"}), True)

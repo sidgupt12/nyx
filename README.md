@@ -203,10 +203,11 @@ No missing device, expired request, or error ever means "approve".
   still need their trusted hooks to run after Nyx starts.
 - Hooks observe events only after installation/trust. Current desktop builds do not always
   deliver `Stop`, so Nyx performs one bounded transcript catch-up and then follows only new
-  lifecycle metadata. Terminal status still comes from hooks. Each hook also records its
-  originating Codex process ID; Nyx removes that session after the process has been gone for
-  three seconds. This catches a closed terminal process or Cmd+Q without treating chat
-  switching, inactivity, or Cmd+W as a finished session.
+  lifecycle metadata. Terminal status still comes from hooks. Standalone sessions follow
+  their Codex process; shared-daemon terminal sessions follow the attached remote TUI's TTY.
+  Nyx removes the session three seconds after that client disappears, rather than following
+  the long-lived daemon. Ambiguous matches remain visible instead of guessing. This catches
+  an exited terminal process or closed tab without treating inactivity as a finished session.
 - Terminal/iTerm exact tab targeting requires valid origin metadata. VS Code is app-level
   focus only. Desktop tasks marked `codex_work_desktop` open their exact conversation
   through the installed app's deep link. Unknown origins do not open a random Terminal.
