@@ -10,12 +10,13 @@ import time
 
 from .controller import Controller
 from .hardware import SerialHardware
-from .opener import open_session
+from .opener import launch_new, open_session
 from .protocol import EVENTS, encode, receive, socket_path
 from .session_info import SessionObserver
 from .native import NativeApprovals
 from .desktop import Desktop
 from .appserver import AppServer
+from .settings import Settings
 
 LOG = logging.getLogger(__name__)
 
@@ -26,12 +27,14 @@ class Bridge:
         self.controller = controller or Controller(manual_approvals=manual_approvals)
         self.stopped = threading.Event()
         self.workers = threading.BoundedSemaphore(24)
-        self.hardware = SerialHardware(
-            port, self.controller.snapshot, self.action, self.controller.cancel_all
-        )
         self.observer = SessionObserver(self.controller)
         self.native = NativeApprovals(self.controller)
         self.native.sources = [Desktop(self.native), AppServer(self.native)] if native else []
+        self.settings = Settings(self.controller, self.native.sources)
+        self.native.settings = self.settings
+        self.hardware = SerialHardware(
+            port, self.settings.snapshot, self.action, self.device_disconnected
+        )
         self.server = None
         self.lock_file = None
 
@@ -99,9 +102,13 @@ class Bridge:
                                 "device": self.hardware.ready.is_set(),
                                 "manual_approvals": self.controller.manual_approvals,
                                 "pid": os.getpid(),
-                                "native": {source.name: source.connected for source in self.native.sources},
+                                "native": {
+                                    source.name: source.connected for source in self.native.sources
+                                },
                                 "native_sessions": {
-                                    source.name: len(getattr(source, 'states', getattr(source, 'joined', [])))
+                                    source.name: len(
+                                        getattr(source, "states", getattr(source, "joined", []))
+                                    )
                                     for source in self.native.sources
                                 },
                             }
@@ -136,15 +143,31 @@ class Bridge:
             self.workers.release()
 
     def action(self, message):
+        if str(message.get("action", "")).startswith("menu_"):
+            return self.settings.action(message)
+        self.settings.cancel()
         result, payload = self.controller.action(message)
-        if payload is not None and 'native_token' in payload:
-            submitted = self.native.submit(payload['native_token'], payload['native_action'])
-            return {'ok': submitted, 'status': 'queued' if submitted else 'request_already_resolved'}
+        if payload is not None and "launch_target" in payload:
+            threading.Thread(
+                target=launch_new, args=(payload["launch_target"],), daemon=True
+            ).start()
+            result["status"] = "launch_requested"
+            return result
+        if payload is not None and "native_token" in payload:
+            submitted = self.native.submit(payload["native_token"], payload["native_action"])
+            return {
+                "ok": submitted,
+                "status": "queued" if submitted else "request_already_resolved",
+            }
         if payload is not None:
             # Window automation must never block the USB heartbeat.
             threading.Thread(target=open_session, args=(payload,), daemon=True).start()
             result["status"] = "open_requested"
         return result
+
+    def device_disconnected(self):
+        self.settings.cancel()
+        self.controller.cancel_all()
 
 
 def control(command="status", path=None):

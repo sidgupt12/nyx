@@ -25,6 +25,23 @@ and adds physical controls without replacing or blocking the normal Codex UI.
 The Python suite contained 95 passing tests when this checkpoint was created, followed
 by a successful live test of session selection and encoder opening.
 
+## Follow-up status — September 14, 2026
+
+The checkpoint remains unchanged and the tag is not being moved. The current working
+tree adds 119 automated tests, a source/build-tested MODE control, refreshed OLED
+presentation, and the model/effort settings path. MODE is GPIO4 to GND: one press
+opens effort selection, two quick presses open model selection, the encoder browses
+and confirms, and five idle seconds cancels browsing. The native catalog supplies the
+available models and reasoning levels; only the next-turn model and effort are sent.
+
+The current firmware build succeeds, but this follow-up has not been flashed or
+physically validated yet. The exact test commands and live wiring sequence remain
+in `docs/wiring.md` and `docs/project-status.md`.
+
+NEW still opens a Codex-mode composer but does not create an OLED entry until Codex
+publishes a real session ID. Empty-window tracking is deliberately deferred and
+isolated in `docs/empty-window-tracking.md`; no synthetic session or timer was added.
+
 ## Guarantees future changes must preserve
 
 1. Nyx is an add-on. Codex must continue working normally when Nyx is stopped,

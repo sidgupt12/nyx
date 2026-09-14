@@ -10,6 +10,9 @@ Nyx does not start agents, send prompts, or replace the normal Codex interface. 
 a local add-on: Codex continues to work normally when Nyx is stopped or unplugged. Its
 controls perform specific Codex actions; Phase 1 is not a programmable macropad.
 
+The current build also adds a hardware launcher: press NEW once to open a fresh
+Codex desktop task.
+
 ## Phase 1: working
 
 - Shows multiple Codex desktop and terminal sessions on a 1.3-inch OLED.
@@ -32,7 +35,7 @@ regression checklist are documented in [the Phase 1 checkpoint](docs/phase-1-che
 | 1 | ESP32-S3-N16R8 development board (DevKit style) |
 | 1 | 1.3-inch SH1106 128×64 blue I2C OLED, 4 pin |
 | 1 | KY-040-style rotary encoder module with push switch |
-| 2 | Tactile push buttons: approve and reject |
+| 4 | Tactile push buttons: approve, reject, new window, and MODE |
 | 1 | Full-size solderless breadboard |
 | — | Male-to-male jumper wires |
 | 1 | USB data cable for the board's USB/UART connector |
@@ -54,6 +57,8 @@ Disconnect USB before changing wires. Use 3.3 V and a shared ground.
 | OLED SCK/SCL | GPIO 9 |
 | Approve button | GPIO 5 ↔ button ↔ GND |
 | Reject button | GPIO 12 ↔ button ↔ GND |
+| New-window button | GPIO 11 ↔ button ↔ GND |
+| MODE button | GPIO 4 ↔ button ↔ GND |
 | Encoder CLK | GPIO 6 |
 | Encoder DT | GPIO 7 |
 | Encoder SW | GPIO 10 |
@@ -157,6 +162,32 @@ Start Nyx again after a Mac reboot. Stop it at any time with `nyx stop`.
 | Press encoder | Open that session's window |
 | Approve button | Allow the displayed live request once |
 | Reject button | Decline or cancel the displayed live request |
+| New-window button | Open a fresh Codex desktop task |
+| MODE button, once | Choose effort for the selected session |
+| MODE button, twice quickly | Choose model for the selected session |
+
+MODE is wired to **GPIO4 and GND**. In its menu the encoder browses and its
+push-switch confirms; NO cancels. After five idle seconds the picker closes
+without applying the browsing choice. Options come from Codex's model catalog.
+Changes use the native session interface and apply to the next turn, not an
+already-running turn. No approval policy or sandbox settings are changed.
+The picker requires a connected native adapter with known model/effort metadata.
+These new controls are source/build tested; a physical end-to-end test is still
+required after uploading the firmware and restarting Nyx.
+
+When no sessions exist, the OLED shows `SUMMON A SIDE QUEST / NO SESSIONS OPEN` and the NEW button can
+still launch one. This requires the USB bridge to be connected; it cannot launch
+Mac apps while the bridge itself is stopped.
+
+An empty composer does **not** yet appear as a session on the OLED. It appears
+when Codex publishes the real session. Immediate empty-window tracking is
+[a separate, unfinished integration](docs/empty-window-tracking.md); no synthetic
+sessions or changes to the stable close observer were added for it.
+
+Session names and OLED copy have a playful voice, with an original pixel buddy
+beside the live state. See [the personality notes](docs/personality.md) for the
+implemented visuals and the current model/effort controls; physical validation is
+still pending.
 
 ## Project layout
 
@@ -177,18 +208,24 @@ ruff check nyx tests
 pio run -d firmware
 ```
 
-Phase 1 has 95 passing Python tests and a successful ESP32-S3 firmware build. Hardware
-changes still require the short live checklist in [docs/wiring.md](docs/wiring.md).
+The tagged Phase 1 checkpoint has 95 passing Python tests. The current source has
+119 automated tests, plus the firmware build; physical changes still require the
+short live checklist in [docs/wiring.md](docs/wiring.md).
 
 ## Current limits
 
 - The desktop integration uses a private local Codex interface that may change after an
   app update.
+- Opening a fresh Codex task uses an explicit Codex-mode app route, so it does not
+  inherit the currently selected ChatGPT surface. The route is version-dependent
+  because it is not a documented public integration API.
 - Native terminal approvals require Codex's managed shared app server; an already-running
   standalone CLI cannot be attached retroactively.
 - Apple Terminal tabs and Codex desktop tasks can open exactly. VS Code routing is currently
   app-level rather than exact integrated-terminal selection.
-- Model and effort are display-only. The encoder does not change them yet.
+- Model and effort can be changed for the next turn through the optional MODE
+  button when a native session adapter exposes the settings interface. This is
+  source/build tested but still needs physical end-to-end validation.
 - The current pin map and firmware target the ESP32-S3, not the ESP32-C3 Super Mini.
 - Nyx does not install login autostart yet.
 

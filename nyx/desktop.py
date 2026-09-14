@@ -61,6 +61,7 @@ class Desktop(Source):
         self.states = {}
         self.revisions = {}
         self.owners = {}
+        self.settings_pending = {}
 
     def send(self, message):
         data = json.dumps(message, separators=(",", ":")).encode()
@@ -104,6 +105,7 @@ class Desktop(Source):
                 self.states.clear()
                 self.revisions.clear()
                 self.owners.clear()
+                self.settings_pending.clear()
                 self.reset()
             self.stopped.wait(2)
 
@@ -144,9 +146,18 @@ class Desktop(Source):
                 followed = set(sessions)
                 checked = time.monotonic()
             self.decisions()
+            self.settings_decisions()
 
     def message(self, message):
         kind = message.get("type")
+        if kind == "response" and message.get("requestId") in self.settings_pending:
+            job = self.settings_pending.pop(message["requestId"])
+            ok = (
+                message.get("resultType") == "success"
+                and message.get("result", {}).get("applied") is True
+            )
+            self.hub.settings.complete(job, ok)
+            return
         if kind == "client-discovery-request":
             self.send(
                 {
@@ -200,6 +211,45 @@ class Desktop(Source):
             self.revisions[sid] = change["revision"]
             self.hub.controller.native_state(sid, self.name, state)
             self.hub.update(self, sid, state.get("requests", []))
+
+    def settings_decisions(self):
+        settings = getattr(self.hub, "settings", None)
+        if settings is None:
+            return
+        for key, job in list(self.settings_pending.items()):
+            if time.monotonic() >= job.deadline:
+                self.settings_pending.pop(key)
+                settings.complete(job, False)
+        while True:
+            try:
+                job = self.settings_actions.get_nowait()
+            except queue.Empty:
+                return
+            owner = self.owners.get(job.session_id)
+            if not owner or not settings.can_send(job):
+                settings.complete(job, False)
+                continue
+            key = str(uuid.uuid4())
+            self.settings_pending[key] = job
+            self.send(
+                {
+                    "type": "request",
+                    "requestId": key,
+                    "sourceClientId": self.client_id,
+                    "targetClientId": owner,
+                    "version": 2,
+                    "timeoutMs": 2000,
+                    "method": "thread-follower-update-thread-settings",
+                    "params": {
+                        "conversationId": job.session_id,
+                        "threadSettings": job.patch,
+                        "condition": {
+                            "ifModelEquals": job.expected_model,
+                            "ifEffortEquals": job.expected_effort,
+                        },
+                    },
+                }
+            )
 
     def decisions(self):
         while True:

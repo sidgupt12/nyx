@@ -297,6 +297,11 @@ class Controller:
         with self.lock:
             self._expire()
             action = message.get("action")
+            if action == "launch":
+                target = message.get("target")
+                if target != "codex":
+                    return {"ok": False, "error": "invalid_launch_target"}, None
+                return {"ok": True}, {"launch_target": target}
             view = message.get("view_id")
             if not isinstance(view, str) or view != self.snapshot()["view_id"] or not view:
                 return {"ok": False, "error": "stale_view"}, None

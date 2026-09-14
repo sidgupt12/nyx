@@ -22,41 +22,73 @@ TAIL_BYTES = 8 * 1024 * 1024
 LINE_BYTES = 128 * 1024
 LIVENESS_GRACE_SECONDS = 3.0
 
-ADJECTIVES = (
-    "Astro",
-    "Chrome",
-    "Cosmic",
-    "Dream",
-    "Electric",
-    "Glitch",
-    "Lunar",
-    "Midnight",
-    "Neon",
-    "Nova",
-    "Pixel",
-    "Quantum",
-    "Solar",
-    "Turbo",
-    "Velvet",
-    "Wild",
-)
-CREATURES = (
-    "Cobra",
-    "Comet",
-    "Dragon",
-    "Echo",
-    "Fox",
-    "Gecko",
-    "Lynx",
-    "Moth",
-    "Orbit",
-    "Owl",
-    "Panther",
-    "Phantom",
-    "Raven",
-    "Spark",
-    "Viper",
-    "Wolf",
+# Hand-picked aliases: short enough for the OLED, memorable enough to find again.
+# Keep the order stable: an alias belongs to its session across bridge restarts.
+SESSION_NAMES = (
+    "Zuzu",
+    "Momo",
+    "Bongo",
+    "Gizmo",
+    "Zippy",
+    "Mochi",
+    "Boba",
+    "Gigi",
+    "Kiki",
+    "Lulu",
+    "Niko",
+    "Pip",
+    "Ziggy",
+    "Bubba",
+    "Dobby",
+    "Yoshi",
+    "Kirby",
+    "Toto",
+    "Milo",
+    "Rocco",
+    "Coco",
+    "Pogo",
+    "Frodo",
+    "Bilbo",
+    "Goober",
+    "Ozzy",
+    "Zorbo",
+    "Bloop",
+    "Wally",
+    "Benny",
+    "Fifi",
+    "Bobo",
+    "Pippin",
+    "Cosmo",
+    "Wumbo",
+    "Bambi",
+    "Taz",
+    "Boo",
+    "Dino",
+    "Remy",
+    "Mushu",
+    "Nemo",
+    "Loki",
+    "Juno",
+    "Fozzie",
+    "Gonzo",
+    "Elmo",
+    "Kermit",
+    "Bingus",
+    "Fergus",
+    "Squee",
+    "Nibbles",
+    "Wiggles",
+    "Pickles",
+    "Gumbo",
+    "Tibby",
+    "Chompy",
+    "Doodles",
+    "Zappy",
+    "Nori",
+    "Yuki",
+    "Pingu",
+    "Bonzo",
+    "Waffles",
 )
 
 
@@ -71,9 +103,9 @@ class SessionInfo:
 
 
 def funky_name(session_id):
-    """Return a short, stable two-word alias for a session."""
+    """Return a short, stable character name for a session."""
     digest = hashlib.blake2s(str(session_id).encode(), digest_size=2).digest()
-    return f"{ADJECTIVES[digest[0] % len(ADJECTIVES)]} {CREATURES[digest[1] % len(CREATURES)]}"
+    return SESSION_NAMES[int.from_bytes(digest, "big") % len(SESSION_NAMES)]
 
 
 def terminal_surface(payload):

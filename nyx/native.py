@@ -142,6 +142,7 @@ class Source:
     def __init__(self, hub):
         self.hub = hub
         self.actions = queue.Queue(maxsize=32)
+        self.settings_actions = queue.Queue(maxsize=8)
         self.stopped = threading.Event()
         self.thread = None
         self.connected = False
@@ -157,6 +158,14 @@ class Source:
 
     def reset(self):
         self.connected = False
+        while not self.settings_actions.empty():
+            try:
+                self.settings_actions.get_nowait()
+            except queue.Empty:
+                break
+        settings = getattr(self.hub, "settings", None)
+        if settings:
+            settings.disconnected(self)
         while not self.actions.empty():
             try:
                 self.actions.get_nowait()

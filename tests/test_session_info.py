@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from nyx.session_info import (
+    SESSION_NAMES,
     SessionObserver,
     funky_name,
     inspect_rollout,
@@ -98,8 +99,17 @@ class SessionInfoTests(unittest.TestCase):
     def test_funky_names_are_stable_and_readable(self):
         name = funky_name(self.SESSION)
         self.assertEqual(name, funky_name(self.SESSION))
-        self.assertEqual(len(name.split()), 2)
+        self.assertEqual(len(name.split()), 1)
         self.assertLessEqual(len(name), 18)
+
+    def test_every_alias_fits_oled_and_is_distinct(self):
+        self.assertEqual(len(SESSION_NAMES), len(set(SESSION_NAMES)))
+        for name in SESSION_NAMES:
+            with self.subTest(name=name):
+                self.assertTrue(name.isascii())
+                self.assertEqual(len(name.split()), 1)
+                self.assertLessEqual(len(name), 18)
+        self.assertNotIn("Rubber Duck", SESSION_NAMES)
 
     def test_terminal_hint_uses_recorded_origin(self):
         self.assertEqual(terminal_surface({"_nyx": {"tty": "/dev/ttys001"}}), "TERM")

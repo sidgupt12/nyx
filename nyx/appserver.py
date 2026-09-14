@@ -17,6 +17,7 @@ from websockets.exceptions import WebSocketException
 from .native import METHODS, Source, response_for
 from .protocol import runtime_dir
 from .session_info import inspect_origin
+from .settings import normalize_models
 
 LOG = logging.getLogger(__name__)
 MAX_LINE = 8 * 1024 * 1024
@@ -32,6 +33,8 @@ class AppServer(Source):
         self.pending = {}
         self.requests = {}
         self.joined = set()
+        self.models = []
+        self.model_pages = []
 
     def send(self, message):
         self.connection.send(json.dumps(message, separators=(",", ":")))
@@ -55,7 +58,13 @@ class AppServer(Source):
                     proxy=None,
                     compression=None,
                 ) as self.connection:
-                    self.call("initialize", {"clientInfo": {"name": "nyx", "version": "0.1.0"}})
+                    self.call(
+                        "initialize",
+                        {
+                            "clientInfo": {"name": "nyx", "version": "0.1.0"},
+                            "capabilities": {"experimentalApi": True},
+                        },
+                    )
                     self.loop()
             except (OSError, ValueError, KeyError, TypeError, WebSocketException) as exc:
                 LOG.debug("Terminal server unavailable: %s", exc)
@@ -63,6 +72,8 @@ class AppServer(Source):
                 self.pending.clear()
                 self.requests.clear()
                 self.joined.clear()
+                self.models.clear()
+                self.model_pages.clear()
                 self.reset()
             self.stopped.wait(2)
 
@@ -74,6 +85,12 @@ class AppServer(Source):
             except TimeoutError:
                 pass
             now = time.monotonic()
+            # A missing settings acknowledgement must not reset approvals or
+            # the terminal connection. Drop only this settings request.
+            for key, (method, job, _) in list(self.pending.items()):
+                if method == "thread/settings/update" and now >= job.deadline:
+                    self.pending.pop(key)
+                    self.hub.settings.complete(job, False)
             if any(now - started > 10 for _, _, started in self.pending.values()):
                 raise ValueError("app-server response timeout")
             if self.connected and now - checked > 1:
@@ -81,9 +98,23 @@ class AppServer(Source):
                 checked = now
             if self.connected:
                 self.decisions()
+                self.settings_decisions()
 
     def message(self, message):
         method = message.get("method")
+        if method == "thread/settings/updated":
+            params = message["params"]
+            if params["threadId"] in self.joined:
+                values = params.get("threadSettings", {})
+                self.hub.controller.native_state(
+                    params["threadId"],
+                    self.name,
+                    {
+                        "latestModel": values.get("model"),
+                        "latestReasoningEffort": values.get("effort"),
+                    },
+                )
+            return
         if method in METHODS and "id" in message:
             sid = message["params"]["threadId"]
             if sid in self.joined:
@@ -118,6 +149,8 @@ class AppServer(Source):
             return
         method, context, _ = pending
         if "error" in message:
+            if method == "thread/settings/update":
+                self.hub.settings.complete(context, False)
             if method == "initialize":
                 raise ValueError("app-server initialize rejected")
             if method == "thread/resume":
@@ -128,6 +161,16 @@ class AppServer(Source):
         if method == "initialize":
             self.send({"method": "initialized", "params": {}})
             self.connected = True
+            self.call("model/list", {"limit": 100})
+        elif method == "model/list":
+            self.model_pages.extend(normalize_models(result.get("data", [])))
+            if result.get("nextCursor") and len(self.model_pages) < 100:
+                self.call("model/list", {"limit": 100, "cursor": result["nextCursor"]})
+            else:
+                self.models = self.model_pages[:100]
+                self.model_pages = []
+        elif method == "thread/settings/update":
+            self.hub.settings.complete(context, True)
         elif method == "thread/loaded/list":
             # Only rejoin sessions known through hooks AND already in this
             # server. Never load a different copy of a standalone CLI session.
@@ -170,3 +213,17 @@ class AppServer(Source):
             self.send({"id": offer.request_id, "result": response})
             requests.pop(offer.request_id, None)
             self.hub.update(self, offer.session_id, list(requests.values()))
+
+    def settings_decisions(self):
+        settings = getattr(self.hub, "settings", None)
+        if settings is None:
+            return
+        while True:
+            try:
+                job = self.settings_actions.get_nowait()
+            except queue.Empty:
+                return
+            if job.session_id not in self.joined or not settings.can_send(job):
+                settings.complete(job, False)
+                continue
+            self.call("thread/settings/update", {"threadId": job.session_id, **job.patch}, job)

@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from nyx.listener import Bridge, control
@@ -120,6 +121,15 @@ class SerialTests(unittest.TestCase):
         )
         time.sleep(0.15)
         self.assertFalse(request.ready.is_set())
+
+    @patch("nyx.listener.launch_new")
+    def test_device_can_launch_without_any_session(self, launch):
+        os.write(
+            self.master,
+            encode({"v": 1, "type": "action", "action": "launch", "target": "codex"}),
+        )
+        until(lambda: launch.called)
+        launch.assert_called_once_with("codex")
 
     def test_missing_heartbeat_invalidates_request(self):
         request = self.bridge.controller.event(event(), True)

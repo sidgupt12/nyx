@@ -9,6 +9,28 @@ from .session_info import inspect_rollout, remote_terminal_clients
 LOG = logging.getLogger(__name__)
 
 
+def launch_new(target):
+    """Open one fixed, trusted destination without interpolating device input."""
+    try:
+        if target == "codex":
+            # Explicit mode switches the combined app to Codex before opening
+            # its new-task screen. No keyboard or Accessibility automation.
+            _run(
+                [
+                    "open",
+                    "-b",
+                    "com.openai.codex",
+                    "codex://threads/new?mode=codex",
+                ]
+            )
+        else:
+            return False
+        return True
+    except (OSError, subprocess.SubprocessError) as exc:
+        LOG.warning("Could not launch %s: %s", target, exc)
+        return False
+
+
 def open_session(payload):
     metadata = payload.get("_nyx", {})
     term = str(metadata.get("term_program", "")).lower()

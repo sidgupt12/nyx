@@ -140,8 +140,34 @@ matches fail open. Terminal
 status remains hook-owned, so transcript fallback cannot incorrectly mark a live
 terminal task idle.
 
-Every session ID maps deterministically to a short two-word alias such as
-`Quantum Fox`. The alias is display-only and does not rename the Codex task.
+Every session ID maps deterministically to a character nickname such as
+`Momo` or `Gizmo`. The nickname is display-only and does not rename the Codex task.
+Nicknames can collide; action routing always uses the full session ID.
+
+## Model and effort picker
+
+`settings.py` owns the short-lived picker; it is not part of session lifecycle
+or approval detection. The USB snapshot includes a menu only while the same
+native session is selected. Five idle seconds, an actual permission prompt,
+source disconnect or USB reset invalidates the picker and unsent commands.
+
+Browsing is read-only. Confirmation creates a bounded, one-shot job with the
+session ID and expected current model/effort. Desktop sends a conditional
+version-2 `thread-follower-update-thread-settings` request to the known owner.
+Terminal sends `thread/settings/update`; its `thread/settings/updated` event
+updates the displayed metadata. The terminal write has no server-side compare
+condition, so concurrent native UI changes follow the server's ordering.
+Only model and effort are sent, never permissions, sandbox or approval policy.
+
+The model catalog comes from native `model/list` or Codex's visible cached
+catalog, with no invented effort levels. A model switch retains the effort if
+supported, otherwise uses that model's reported default. Acknowledgements are
+shown separately from real native runtime metadata; timeout means unconfirmed,
+not proof of failure, and does not reset the approval connection.
+
+Verified against the installed CLI 0.154.0 generated experimental JSON schemas
+and a read-only catalog request to the running 0.153.4 daemon. Native writes
+are covered by protocol tests; physical/end-to-end validation remains pending.
 
 The documented `PermissionRequest` hook does not include `approvals_reviewer`.
 To avoid showing automatically reviewed internal requests as human pauses, the
@@ -152,7 +178,7 @@ takes precedence over transcript status.
 
 ## Reproduce the build
 
-Researched against Codex CLI 0.153.0. Firmware builds with PlatformIO Core 6.1.19,
+Researched against Codex CLI 0.154.0 and app-server 0.153.4. Firmware builds with PlatformIO Core 6.1.19,
 Espressif32 7.0.1, U8g2 2.36.12, ArduinoJson 6.21.5.
 The board choice follows the [PlatformIO DevKitC-1 reference](https://docs.platformio.org/en/latest/boards/espressif32/esp32-s3-devkitc-1.html).
 The display API follows [U8g2's official reference](https://github.com/olikraus/u8g2/wiki/u8g2reference).

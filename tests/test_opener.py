@@ -3,10 +3,27 @@ import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
-from nyx.opener import desktop_link, open_session
+from nyx.opener import desktop_link, launch_new, open_session
 
 
 class OpenerTests(unittest.TestCase):
+    @patch("nyx.opener._run")
+    def test_launch_codex_explicitly_selects_codex_mode(self, run):
+        self.assertTrue(launch_new("codex"))
+        run.assert_called_once_with(
+            [
+                "open",
+                "-b",
+                "com.openai.codex",
+                "codex://threads/new?mode=codex",
+            ]
+        )
+
+    @patch("nyx.opener._run")
+    def test_unknown_launch_target_does_nothing(self, run):
+        self.assertFalse(launch_new("calculator"))
+        run.assert_not_called()
+
     @patch("nyx.opener._run")
     def test_unknown_origin_never_opens_random_terminal(self, run):
         open_session({"_nyx": {}})

@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from nyx.controller import Controller
 from nyx.listener import Bridge, control
@@ -130,3 +131,10 @@ class ListenerTests(unittest.TestCase):
             connection.connect(str(self.path))
             connection.sendall(b"[]\n")
         self.assertTrue(control(path=self.path)["ok"])
+
+    @patch("nyx.listener.launch_new")
+    def test_global_launch_works_without_a_session(self, launch):
+        result = self.bridge.action({"action": "launch", "target": "codex"})
+        self.assertEqual(result, {"ok": True, "status": "launch_requested"})
+        until(lambda: launch.called)
+        launch.assert_called_once_with("codex")

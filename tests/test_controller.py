@@ -139,7 +139,7 @@ class ControllerTests(unittest.TestCase):
         state = self.core.snapshot()
         self.assertEqual(state["surface"], "TERM")
         self.assertEqual((state["model"], state["effort"]), ("gpt-6-astra", "xhigh"))
-        self.assertEqual(len(state["name"].split()), 2)
+        self.assertEqual(len(state["name"].split()), 1)
 
     def test_desktop_reconciliation_can_mark_idle(self):
         self.core.event(event("UserPromptSubmit"), True)
@@ -156,3 +156,11 @@ class ControllerTests(unittest.TestCase):
         self.core.reconcile("session-a", approvals_reviewer="auto_review")
         self.assertIsNone(self.core.event(event("PermissionRequest"), True))
         self.assertEqual(self.core.snapshot()["status"], "RUNNING")
+
+    def test_launch_is_global_and_target_is_whitelisted(self):
+        result, payload = self.core.action({"action": "launch", "target": "codex"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(payload, {"launch_target": "codex"})
+        result, payload = self.core.action({"action": "launch", "target": "calculator"})
+        self.assertFalse(result["ok"])
+        self.assertIsNone(payload)
